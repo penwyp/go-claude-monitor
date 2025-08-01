@@ -2,7 +2,6 @@ package layout
 
 import (
 	"github.com/mattn/go-runewidth"
-	"github.com/penwyp/go-claude-monitor/internal/util"
 	"golang.org/x/term"
 	"os"
 	"strings"
@@ -45,7 +44,5 @@ func (i Sizer) GetMaxWidth() int {
 	if maxWidth > 120 {
 		maxWidth = 74 // Cap at reasonable maximum
 	}
-
-	util.LogDebugf("GetMaxWidth %d", maxWidth)
 	return maxWidth
 }

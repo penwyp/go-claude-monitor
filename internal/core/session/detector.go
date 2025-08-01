@@ -15,19 +15,28 @@ type SessionDetector struct {
 	timezone        *time.Location
 	aggregator      *aggregator.Aggregator // Add aggregator field for real-time cost calculation
 	limitParser     *LimitParser           // Parser for limit messages
+	windowHistory   *WindowHistoryManager  // Window history manager
 }
 
 // NewSessionDetectorWithAggregator creates a SessionDetector with a custom aggregator
-func NewSessionDetectorWithAggregator(aggregator *aggregator.Aggregator, timezone string) *SessionDetector {
+func NewSessionDetectorWithAggregator(aggregator *aggregator.Aggregator, timezone string, cacheDir string) *SessionDetector {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		loc = time.Local
 	}
+	
+	// Create window history manager
+	windowHistory := NewWindowHistoryManager(cacheDir)
+	if err := windowHistory.Load(); err != nil {
+		util.LogWarn(fmt.Sprintf("Failed to load window history: %v", err))
+	}
+	
 	return &SessionDetector{
 		sessionDuration: 5 * time.Hour,
 		timezone:        loc,
 		aggregator:      aggregator,
 		limitParser:     NewLimitParser(),
+		windowHistory:   windowHistory,
 	}
 }
 
@@ -45,6 +54,8 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 	// Log input data
 	util.LogInfo(fmt.Sprintf("DetectSessionsWithLimits: Processing %d hourly data entries and %d raw logs",
 		len(input.HourlyData), len(input.RawLogs)))
+	util.LogDebug(fmt.Sprintf("DetectSessionsWithLimits: CachedWindowInfo available for %d sessions",
+		len(input.CachedWindowInfo)))
 
 	// Detect limit messages if raw logs are provided
 	var limits []LimitInfo
@@ -60,6 +71,21 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 		if windowStartFromLimit != nil {
 			util.LogInfo(fmt.Sprintf("Detected sliding window from %s: start=%d",
 				windowSource, *windowStartFromLimit))
+			util.LogDebug(fmt.Sprintf("Window detection details - Source: %s, StartTime: %s, Limits found: %d",
+				windowSource,
+				time.Unix(*windowStartFromLimit, 0).Format("2006-01-02 15:04:05"),
+				len(limits)))
+			
+			// Update window history with limit message information
+			if d.windowHistory != nil && windowSource == "limit_message" && len(limits) > 0 {
+				// Find the limit with reset time
+				for _, limit := range limits {
+					if limit.ResetTime != nil {
+						d.windowHistory.UpdateFromLimitMessage(*limit.ResetTime, limit.Timestamp)
+						break
+					}
+				}
+			}
 		}
 	} else {
 		util.LogInfo("No raw logs provided for limit detection")
@@ -121,6 +147,11 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 				util.LogInfo(fmt.Sprintf("Using cached window info: start=%v, source=%s, detectedAt=%s",
 					windowStartFromLimit, windowSource,
 					time.Unix(cachedWindow.DetectedAt, 0).Format("15:04:05")))
+				if cachedWindow.WindowStartTime != nil {
+					util.LogDebug(fmt.Sprintf("Cached window details - WindowStart: %s, Source: %s",
+						time.Unix(*cachedWindow.WindowStartTime, 0).Format("2006-01-02 15:04:05"),
+						cachedWindow.WindowSource))
+				}
 			}
 
 			// Create new session with sliding window support
@@ -174,6 +205,13 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 	var isWindowDetected bool
 	var windowSource string
 
+	// Debug log input parameters
+	util.LogDebug(fmt.Sprintf("createNewSessionWithWindow called - FirstData.Hour: %s, FirstEntryTime: %s, DetectedWindowStart: %v, Source: %s",
+		time.Unix(firstData.Hour, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(firstData.FirstEntryTime, 0).Format("2006-01-02 15:04:05"),
+		detectedWindowStart,
+		source))
+
 	if detectedWindowStart != nil && *detectedWindowStart > 0 {
 		// Use detected window start
 		windowStart = *detectedWindowStart
@@ -184,6 +222,10 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 
 		util.LogInfo(fmt.Sprintf("Creating session with detected window: start=%s, source=%s",
 			time.Unix(windowStart, 0).Format("15:04:05"), windowSource))
+		util.LogDebug(fmt.Sprintf("Detected window algorithm - WindowStart: %s, WindowEnd: %s, Duration: %v",
+			time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05"),
+			d.sessionDuration))
 	} else if firstData.FirstEntryTime > 0 {
 		// Use first entry time as window start (sliding window), rounded down to hour
 		windowStart = truncateToHour(firstData.FirstEntryTime)
@@ -194,6 +236,10 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 
 		util.LogInfo(fmt.Sprintf("Creating session with first message window: start=%d (FirstEntryTime=%d, truncated from %d)",
 			windowStart, firstData.FirstEntryTime, firstData.FirstEntryTime))
+		util.LogDebug(fmt.Sprintf("First message algorithm - Original: %s, Truncated: %s, WindowEnd: %s",
+			time.Unix(firstData.FirstEntryTime, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05")))
 	} else {
 		// Fallback to rounded hour (original behavior)
 		windowStart, windowEnd = d.calculateSessionWindow(firstData.Hour)
@@ -202,9 +248,48 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 		windowSource = "rounded_hour"
 		util.LogInfo(fmt.Sprintf("Creating session with rounded hour window: start=%d (Hour=%d, FirstEntryTime=%d)",
 			windowStart, firstData.Hour, firstData.FirstEntryTime))
+		util.LogDebug(fmt.Sprintf("Rounded hour algorithm - Input: %s, WindowStart: %s, WindowEnd: %s",
+			time.Unix(firstData.Hour, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05")))
+	}
+
+	// Validate window against history
+	if d.windowHistory != nil {
+		validStart, validEnd, wasAdjusted := d.windowHistory.ValidateNewWindow(windowStart, windowEnd)
+		if wasAdjusted {
+			util.LogInfo(fmt.Sprintf("Window adjusted by history: original %s-%s, adjusted to %s-%s",
+				time.Unix(windowStart, 0).Format("15:04:05"),
+				time.Unix(windowEnd, 0).Format("15:04:05"),
+				time.Unix(validStart, 0).Format("15:04:05"),
+				time.Unix(validEnd, 0).Format("15:04:05")))
+			windowStart = validStart
+			windowEnd = validEnd
+			windowStartTime = windowStart
+		}
 	}
 
 	sessionID := fmt.Sprintf("%d", windowStart)
+
+	// Debug log final session window
+	util.LogDebug(fmt.Sprintf("Final session window - ID: %s, StartTime: %s, EndTime: %s, IsDetected: %v, Source: %s",
+		sessionID,
+		time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05"),
+		isWindowDetected,
+		windowSource))
+
+	// Add window to history
+	if d.windowHistory != nil {
+		record := WindowRecord{
+			StartTime:   windowStart,
+			EndTime:     windowEnd,
+			Source:      windowSource,
+			IsConfirmed: false,
+			SessionID:   sessionID,
+		}
+		d.windowHistory.AddOrUpdateWindow(record)
+	}
 
 	return &Session{
 		ID:                sessionID,
@@ -289,7 +374,15 @@ func (d *SessionDetector) addDataToSession(session *Session, data aggregator.Hou
 
 	// Update actual end time
 	if session.ActualEndTime == nil || data.LastEntryTime > *session.ActualEndTime {
+		oldEndTime := "nil"
+		if session.ActualEndTime != nil {
+			oldEndTime = time.Unix(*session.ActualEndTime, 0).Format("2006-01-02 15:04:05")
+		}
 		session.ActualEndTime = &data.LastEntryTime
+		util.LogDebug(fmt.Sprintf("Session %s - Updated ActualEndTime from %s to %s",
+			session.ID,
+			oldEndTime,
+			time.Unix(data.LastEntryTime, 0).Format("2006-01-02 15:04:05")))
 	}
 }
 
@@ -298,6 +391,10 @@ func (d *SessionDetector) calculateMetrics(session *Session, nowTimestamp int64)
 	startTimeForCalc := session.StartTime
 	if session.FirstEntryTime > 0 && session.FirstEntryTime > session.StartTime {
 		startTimeForCalc = session.FirstEntryTime
+		util.LogDebug(fmt.Sprintf("Session %s - Using FirstEntryTime for calc: %s instead of StartTime: %s",
+			session.ID,
+			time.Unix(startTimeForCalc, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(session.StartTime, 0).Format("2006-01-02 15:04:05")))
 	}
 
 	// Calculate session progress
@@ -351,13 +448,27 @@ func (d *SessionDetector) calculateMetrics(session *Session, nowTimestamp int64)
 	if session.WindowStartTime != nil && session.IsWindowDetected {
 		// Use sliding window reset time
 		session.ResetTime = *session.WindowStartTime + int64(d.sessionDuration.Seconds())
-		util.LogDebug(fmt.Sprintf("Using sliding window reset time: %d (source: %s)",
-			session.ResetTime, session.WindowSource))
+		util.LogDebug(fmt.Sprintf("Session %s - Using sliding window reset time: %s (source: %s)",
+			session.ID,
+			time.Unix(session.ResetTime, 0).Format("2006-01-02 15:04:05"),
+			session.WindowSource))
 	} else {
 		// Use session end time as reset time
 		session.ResetTime = session.EndTime
+		util.LogDebug(fmt.Sprintf("Session %s - Using EndTime as reset time: %s",
+			session.ID,
+			time.Unix(session.ResetTime, 0).Format("2006-01-02 15:04:05")))
 	}
 	session.PredictedEndTime = session.ResetTime
+	
+	// Debug log all time values
+	util.LogDebug(fmt.Sprintf("Session %s - Time values: StartTime=%s, EndTime=%s, ResetTime=%s, PredictedEndTime=%s, ActualEndTime=%v",
+		session.ID,
+		time.Unix(session.StartTime, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(session.EndTime, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(session.ResetTime, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(session.PredictedEndTime, 0).Format("2006-01-02 15:04:05"),
+		session.ActualEndTime))
 
 	// Projections
 	if session.TokensPerMinute > 0 {
@@ -366,6 +477,14 @@ func (d *SessionDetector) calculateMetrics(session *Session, nowTimestamp int64)
 			int(session.TokensPerMinute*remainingMinutes)
 		session.ProjectedCost = session.TotalCost +
 			(session.CostPerHour * (remainingMinutes / 60.0))
+		
+		util.LogDebug(fmt.Sprintf("Session %s - Projections: RemainingMinutes=%.2f, CurrentTokens=%d, ProjectedTokens=%d, CurrentCost=%.2f, ProjectedCost=%.2f",
+			session.ID,
+			remainingMinutes,
+			session.TotalTokens,
+			session.ProjectedTokens,
+			session.TotalCost,
+			session.ProjectedCost))
 	}
 }
 

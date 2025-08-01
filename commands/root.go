@@ -86,7 +86,7 @@ func init() {
 		"Timezone setting (e.g., Asia/Shanghai, UTC)")
 
 	// System and debugging
-	rootCmd.Flags().BoolVar(&debug, "debug", false,
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false,
 		"Enable debug mode")
 	rootCmd.Flags().BoolVarP(&reset, "reset", "r", false,
 		"Clear cache before analysis")

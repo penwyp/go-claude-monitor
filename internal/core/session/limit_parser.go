@@ -51,6 +51,8 @@ func (p *LimitParser) ParseLogs(logs []model.ConversationLog) []LimitInfo {
 	var limits []LimitInfo
 
 	util.LogInfo(fmt.Sprintf("LimitParser: Parsing %d logs for limit messages", len(logs)))
+	util.LogDebug(fmt.Sprintf("LimitParser: Starting with patterns - opus: %v, wait: %v, reset: %v, general: %v",
+		p.opusPattern != nil, p.waitPattern != nil, p.resetPattern != nil, p.generalPattern != nil))
 
 	for _, log := range logs {
 		// Parse different log types
@@ -59,12 +61,27 @@ func (p *LimitParser) ParseLogs(logs []model.ConversationLog) []LimitInfo {
 			if limit := p.parseSystemMessage(log); limit != nil {
 				limits = append(limits, *limit)
 				util.LogInfo(fmt.Sprintf("Found system limit message: %s", limit.Type))
+				util.LogDebug(fmt.Sprintf("System limit details - Type: %s, Timestamp: %s, ResetTime: %v, Content: %.100s",
+					limit.Type,
+					time.Unix(limit.Timestamp, 0).Format("2006-01-02 15:04:05"),
+					limit.ResetTime,
+					limit.Content))
 			}
 		case "user", "assistant":
 			if limit := p.parseUserAssistantMessage(log); limit != nil {
 				limits = append(limits, *limit)
+				resetTimeStr := "nil"
+				if limit.ResetTime != nil {
+					resetTimeStr = time.Unix(*limit.ResetTime, 0).Format("2006-01-02 15:04:05")
+				}
 				util.LogInfo(fmt.Sprintf("Found %s limit message: %s, reset time: %v",
 					log.Type, limit.Type, limit.ResetTime))
+				util.LogDebug(fmt.Sprintf("%s limit details - Type: %s, Timestamp: %s, ResetTime: %s, Model: %s",
+					log.Type,
+					limit.Type,
+					time.Unix(limit.Timestamp, 0).Format("2006-01-02 15:04:05"),
+					resetTimeStr,
+					limit.Model))
 			}
 		}
 	}
@@ -260,6 +277,8 @@ func (p *LimitParser) parseTextContent(text string, log model.ConversationLog, m
 
 // DetectWindowFromLimits analyzes limit messages to determine window start times
 func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *int64, source string) {
+	util.LogDebug(fmt.Sprintf("DetectWindowFromLimits: Analyzing %d limits", len(limits)))
+	
 	if len(limits) == 0 {
 		return nil, ""
 	}
@@ -270,6 +289,12 @@ func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *i
 	for i := range limits {
 		limit := &limits[i]
 		if limit.ResetTime != nil {
+			util.LogDebug(fmt.Sprintf("Limit candidate %d - Type: %s, Timestamp: %s, ResetTime: %s",
+				i,
+				limit.Type,
+				time.Unix(limit.Timestamp, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(*limit.ResetTime, 0).Format("2006-01-02 15:04:05")))
+			
 			if bestLimit == nil || limit.Timestamp > bestLimit.Timestamp {
 				bestLimit = limit
 			}
@@ -277,6 +302,7 @@ func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *i
 	}
 
 	if bestLimit == nil {
+		util.LogDebug("No limits found with reset time")
 		return nil, ""
 	}
 
@@ -284,8 +310,14 @@ func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *i
 	// Window starts 5 hours before reset
 	windowStartTime := *bestLimit.ResetTime - (5 * 60 * 60)
 
-	util.LogDebug(fmt.Sprintf("Detected window from limit message: start=%d, reset=%d, type=%s",
-		windowStartTime, *bestLimit.ResetTime, bestLimit.Type))
+	util.LogInfo(fmt.Sprintf("Detected window from limit message: start=%s, reset=%s, type=%s",
+		time.Unix(windowStartTime, 0).Format("2006-01-02 15:04:05"),
+		time.Unix(*bestLimit.ResetTime, 0).Format("2006-01-02 15:04:05"),
+		bestLimit.Type))
+	util.LogDebug(fmt.Sprintf("Best limit details - Type: %s, Timestamp: %s, Content: %.100s",
+		bestLimit.Type,
+		time.Unix(bestLimit.Timestamp, 0).Format("2006-01-02 15:04:05"),
+		bestLimit.Content))
 
 	return &windowStartTime, "limit_message"
 }

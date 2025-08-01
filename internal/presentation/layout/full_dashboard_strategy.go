@@ -59,8 +59,8 @@ func (s *FullLayoutStrategy) predictionsSection(aggregated *model.AggregatedMetr
 
 	tokensRunOut := aggregated.GetTokensRunOut(param)
 
-	resetAt := aggregated.FormatResetTime(param)
-	resetAt = aggregated.AppendWindowIndicator(resetAt)
+	//resetAt := aggregated.FormatResetTime(param)
+	//resetAt = aggregated.AppendWindowIndicator(resetAt)
 
 	// Build prediction columns with dynamic width calculation
 	var leftPredCol1, rightPredCol1 string
@@ -182,7 +182,7 @@ func (s *FullLayoutStrategy) performanceSection(aggregated *model.AggregatedMetr
 	fmt.Println(sep)
 
 	resetAt := aggregated.FormatResetTime(param)
-	resetAt = aggregated.AppendWindowIndicator(resetAt)
+	//resetAt = aggregated.AppendWindowIndicator(resetAt)
 
 	// Performance metrics - two columns with dynamic width calculation
 	// First, collect all content to find the maximum widths

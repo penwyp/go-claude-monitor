@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 	"time"
 )
@@ -105,6 +106,14 @@ func (aggregated AggregatedMetrics) FormatResetTime(param LayoutParam) string {
 	tp := util.GetTimeProvider()
 	resetTimeObj := time.Unix(resetTime, 0).UTC()
 	resetTimeLocal := tp.In(resetTimeObj)
+
+	util.LogDebug(fmt.Sprintf("FormatResetTime - Input: %d (%s), UTC: %s, Local: %s, TimeFormat: %s, WindowSource: %s",
+		resetTime,
+		time.Unix(resetTime, 0).Format("2006-01-02 15:04:05"),
+		resetTimeObj.Format("2006-01-02 15:04:05"),
+		resetTimeLocal.Format("2006-01-02 15:04:05"),
+		param.TimeFormat,
+		aggregated.WindowSource))
 
 	if param.TimeFormat == "12h" {
 		return resetTimeLocal.Format("3:04 PM")

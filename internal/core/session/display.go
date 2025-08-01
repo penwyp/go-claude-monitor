@@ -242,6 +242,13 @@ func (td *TerminalDisplay) calculateAggregatedMetrics(sessions []*Session) *mode
 		aggregated.WindowSource = firstActiveSession.WindowSource
 		aggregated.IsWindowDetected = firstActiveSession.IsWindowDetected
 
+		util.LogDebug(fmt.Sprintf("Display using session %s - EndTime: %s, ResetTime: %s, PredictedEndTime: %s, WindowSource: %s",
+			firstActiveSession.ID,
+			time.Unix(firstActiveSession.EndTime, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(firstActiveSession.ResetTime, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(firstActiveSession.PredictedEndTime, 0).Format("2006-01-02 15:04:05"),
+			firstActiveSession.WindowSource))
+
 		// Update cache with the first active session info
 		td.lastResetTime = firstActiveSession.ResetTime
 		td.lastPredictedEndTime = aggregated.PredictedEndTime

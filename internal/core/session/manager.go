@@ -87,7 +87,7 @@ func NewManager(config *TopConfig) *Manager {
 		scanner:     scanner.NewFileScanner(config.DataDir),
 		parser:      parser.NewParser(config.Concurrency),
 		aggregator:  agg,
-		detector:    NewSessionDetectorWithAggregator(agg, config.Timezone), // Create detector with aggregator instance
+		detector:    NewSessionDetectorWithAggregator(agg, config.Timezone, config.CacheDir), // Create detector with aggregator instance and cache dir
 		calculator:  NewMetricsCalculator(planLimits),
 		display:     NewTerminalDisplay(config),
 		planLimits:  planLimits,
@@ -406,6 +406,13 @@ func (m *Manager) detectSessions() {
 			time.Unix(session.ResetTime, 0).Format("15:04"),
 			session.TotalTokens,
 			session.TotalCost))
+		util.LogDebug(fmt.Sprintf("Session %s details - StartTime: %s, EndTime: %s, ResetTime: %s, IsActive: %v, IsWindowDetected: %v",
+			session.ID,
+			time.Unix(session.StartTime, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(session.EndTime, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(session.ResetTime, 0).Format("2006-01-02 15:04:05"),
+			session.IsActive,
+			session.IsWindowDetected))
 	}
 
 	util.LogInfo(fmt.Sprintf("Detected %d active sessions", len(m.activeSessions)))
@@ -470,6 +477,16 @@ func (m *Manager) clearAndReload() {
 	// Clear file cache
 	m.fileCache.Clear()
 
+	// Clean up old window history (older than 30 days)
+	if m.detector != nil && m.detector.windowHistory != nil {
+		removed := m.detector.windowHistory.CleanupOldWindows(30)
+		if removed > 0 {
+			util.LogInfo(fmt.Sprintf("Cleaned up %d old window records", removed))
+			// Save the cleaned history
+			m.detector.windowHistory.Save()
+		}
+	}
+
 	// Reload data
 	m.preload()
 }
@@ -492,6 +509,13 @@ func (m *Manager) persistCache() {
 	for hash, entry := range dirtyEntries {
 		if err := m.fileCache.Set(hash, entry); err != nil {
 			util.LogError(fmt.Sprintf("Failed to persist cache: %v", err))
+		}
+	}
+
+	// Also save window history
+	if m.detector != nil && m.detector.windowHistory != nil {
+		if err := m.detector.windowHistory.Save(); err != nil {
+			util.LogError(fmt.Sprintf("Failed to save window history: %v", err))
 		}
 	}
 
@@ -523,6 +547,13 @@ func (m *Manager) handleFileChange(event model.FileEvent) {
 
 // Close cleans up all resources used by the Manager
 func (m *Manager) Close() error {
+	// Save window history before closing
+	if m.detector != nil && m.detector.windowHistory != nil {
+		if err := m.detector.windowHistory.Save(); err != nil {
+			util.LogError(fmt.Sprintf("Failed to save window history on close: %v", err))
+		}
+	}
+
 	// Close file watcher if it exists
 	if m.watcher != nil {
 		if err := m.watcher.Close(); err != nil {
