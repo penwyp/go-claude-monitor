@@ -11,7 +11,7 @@ import (
 func TestSlidingWindowDetection(t *testing.T) {
 	// Create detector with a mock aggregator
 	agg := aggregator.NewAggregatorWithTimezone("UTC")
-	detector := NewSessionDetectorWithAggregator(agg, "UTC")
+	detector := NewSessionDetectorWithAggregator(agg, "UTC", "/tmp")
 
 	// Test data with specific timestamps
 	baseTime := time.Date(2024, 1, 1, 10, 15, 0, 0, time.UTC).Unix() // 10:15 AM
@@ -87,7 +87,7 @@ func TestSlidingWindowDetection(t *testing.T) {
 
 func TestGapDetection(t *testing.T) {
 	agg := aggregator.NewAggregatorWithTimezone("UTC")
-	detector := NewSessionDetectorWithAggregator(agg, "UTC")
+	detector := NewSessionDetectorWithAggregator(agg, "UTC", "/tmp")
 
 	baseTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
 

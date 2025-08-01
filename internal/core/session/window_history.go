@@ -12,6 +12,21 @@ import (
 	"github.com/penwyp/go-claude-monitor/internal/util"
 )
 
+// formatUnixToString converts Unix timestamp to human-readable string
+func formatUnixToString(unixTime int64) string {
+	if unixTime == 0 {
+		return ""
+	}
+	return time.Unix(unixTime, 0).Format("2006-01-02 15:04:05")
+}
+
+// populateStringFields fills the string representations of timestamps
+func (w *WindowRecord) populateStringFields() {
+	w.StartTimeStr = formatUnixToString(w.StartTime)
+	w.EndTimeStr = formatUnixToString(w.EndTime)
+	w.CreatedAtStr = formatUnixToString(w.CreatedAt)
+}
+
 // WindowRecord represents a single session window in history
 type WindowRecord struct {
 	StartTime   int64  `json:"start_time"`
@@ -20,6 +35,10 @@ type WindowRecord struct {
 	IsConfirmed bool   `json:"is_confirmed"` // true if from limit message
 	SessionID   string `json:"session_id"`
 	CreatedAt   int64  `json:"created_at"`
+
+	StartTimeStr string `json:"start_time_str"`
+	EndTimeStr   string `json:"end_time_str"`
+	CreatedAtStr string `json:"created_at_str"`
 }
 
 // WindowHistory manages the history of session windows
@@ -47,7 +66,7 @@ func NewWindowHistoryManager(cacheDir string) *WindowHistoryManager {
 			history:     &WindowHistory{Windows: make([]WindowRecord, 0)},
 		}
 	}
-	
+
 	historyDir := filepath.Join(homeDir, ".go-claude-monitor", "history")
 	return &WindowHistoryManager{
 		historyPath: filepath.Join(historyDir, "window_history.json"),
@@ -72,6 +91,11 @@ func (m *WindowHistoryManager) Load() error {
 	var history WindowHistory
 	if err := json.Unmarshal(data, &history); err != nil {
 		return fmt.Errorf("failed to unmarshal window history: %w", err)
+	}
+
+	// Populate string fields for all loaded records
+	for i := range history.Windows {
+		history.Windows[i].populateStringFields()
 	}
 
 	m.history = &history
@@ -119,6 +143,8 @@ func (m *WindowHistoryManager) AddOrUpdateWindow(record WindowRecord) {
 	defer m.history.mu.Unlock()
 
 	record.CreatedAt = time.Now().Unix()
+	// Populate string fields
+	record.populateStringFields()
 
 	// Check if window already exists
 	for i, existing := range m.history.Windows {
@@ -267,6 +293,9 @@ func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTi
 		SessionID:   fmt.Sprintf("%d", windowStart),
 		CreatedAt:   time.Now().Unix(),
 	}
+	
+	// Populate string fields
+	record.populateStringFields()
 
 	m.AddOrUpdateWindow(record)
 
