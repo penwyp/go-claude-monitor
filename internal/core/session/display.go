@@ -90,6 +90,12 @@ func (td *TerminalDisplay) RenderWithState(sessions []*Session, state model.Inte
 		fmt.Print(util.MoveCursorHome)
 	}
 
+	// Show confirm dialog if present
+	if state.ConfirmDialog != nil {
+		td.renderConfirmDialog(state.ConfirmDialog)
+		return
+	}
+	
 	// Show help if requested
 	if state.ShowHelp {
 		td.ClearScreen()
@@ -113,6 +119,11 @@ func (td *TerminalDisplay) RenderWithState(sessions []*Session, state model.Inte
 		td.smartRender(layoutStrategy, aggregated, layoutParam)
 	} else {
 		layoutStrategy.Render(aggregated, layoutParam)
+	}
+	
+	// Show status message if present
+	if state.StatusMessage != "" {
+		td.renderStatusMessage(state.StatusMessage)
 	}
 
 	td.lastDraw = time.Now().Unix()
@@ -285,7 +296,7 @@ func (td *TerminalDisplay) renderHelp() {
 	fmt.Println("  q/Esc/Ctrl+C - Quit the program")
 	fmt.Println("  r         - Force refresh data")
 	fmt.Println("  t         - Change layout style (Full → Minimal)")
-	fmt.Println("  c         - Clear cache and reload")
+	fmt.Println("  c         - Clear window history")
 	fmt.Println("  p         - Pause/unpause auto-refresh")
 	fmt.Println("  h         - Show this help")
 	fmt.Println("  ESC       - Close help/details (or quit if nothing is open)")
@@ -306,4 +317,77 @@ func (td *TerminalDisplay) renderHelp() {
 	for i := 0; i < 10; i++ {
 		fmt.Println(strings.Repeat(" ", 80))
 	}
+}
+
+func (td *TerminalDisplay) renderConfirmDialog(dialog *model.ConfirmDialog) {
+	// Clear screen for dialog
+	td.ClearScreen()
+	
+	// Center the dialog
+	termWidth := 80 // Assume 80 chars width
+	boxWidth := 60
+	padding := (termWidth - boxWidth) / 2
+	
+	// Move cursor down a bit
+	fmt.Print("\n\n\n\n\n")
+	
+	// Draw dialog box
+	fmt.Printf("%s╔%s╗\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
+	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), util.CenterText(dialog.Title, boxWidth-2))
+	fmt.Printf("%s╠%s╣\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
+	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), strings.Repeat(" ", boxWidth-2))
+	
+	// Wrap message text
+	messageLines := wrapText(dialog.Message, boxWidth-4)
+	for _, line := range messageLines {
+		fmt.Printf("%s║ %s%s ║\n", strings.Repeat(" ", padding), line, strings.Repeat(" ", boxWidth-4-len(line)))
+	}
+	
+	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), strings.Repeat(" ", boxWidth-2))
+	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), util.CenterText("(Y)es / (N)o", boxWidth-2))
+	fmt.Printf("%s╚%s╝\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
+}
+
+func (td *TerminalDisplay) renderStatusMessage(message string) {
+	// Save cursor position
+	fmt.Print(util.SaveCursor)
+	
+	// Move to bottom of screen
+	fmt.Print("\033[999;1H") // Move to row 999 (will stop at bottom)
+	fmt.Print("\033[1A")     // Move up one line
+	
+	// Clear line and print status
+	fmt.Print(util.ClearLine)
+	fmt.Printf("  Status: %s", message)
+	
+	// Restore cursor position
+	fmt.Print(util.RestoreCursor)
+}
+
+// wrapText wraps text to fit within the specified width
+func wrapText(text string, width int) []string {
+	if len(text) <= width {
+		return []string{text}
+	}
+	
+	var lines []string
+	words := strings.Fields(text)
+	currentLine := ""
+	
+	for _, word := range words {
+		if currentLine == "" {
+			currentLine = word
+		} else if len(currentLine)+1+len(word) <= width {
+			currentLine += " " + word
+		} else {
+			lines = append(lines, currentLine)
+			currentLine = word
+		}
+	}
+	
+	if currentLine != "" {
+		lines = append(lines, currentLine)
+	}
+	
+	return lines
 }

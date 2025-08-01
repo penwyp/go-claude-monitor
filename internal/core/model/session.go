@@ -23,10 +23,20 @@ type FileEvent struct {
 
 // InteractionState represents the current UI interaction state
 type InteractionState struct {
-	IsPaused     bool
-	ShowHelp     bool
-	ForceRefresh bool
-	LayoutStyle  int // 0: Full Dashboard, 1: Minimal
+	IsPaused      bool
+	ShowHelp      bool
+	ForceRefresh  bool
+	LayoutStyle   int    // 0: Full Dashboard, 1: Minimal
+	StatusMessage string // Status message to display
+	ConfirmDialog *ConfirmDialog
+}
+
+// ConfirmDialog represents a confirmation dialog
+type ConfirmDialog struct {
+	Title     string
+	Message   string
+	OnConfirm func()
+	OnCancel  func()
 }
 
 // AggregatedMetrics represents combined metrics from all sessions

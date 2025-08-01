@@ -38,8 +38,19 @@ type WindowHistoryManager struct {
 
 // NewWindowHistoryManager creates a new window history manager
 func NewWindowHistoryManager(cacheDir string) *WindowHistoryManager {
+	// Use ~/.go-claude-monitor/history/ instead of cache directory
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// Fallback to cache directory if home directory is not accessible
+		return &WindowHistoryManager{
+			historyPath: filepath.Join(cacheDir, "window_history.json"),
+			history:     &WindowHistory{Windows: make([]WindowRecord, 0)},
+		}
+	}
+	
+	historyDir := filepath.Join(homeDir, ".go-claude-monitor", "history")
 	return &WindowHistoryManager{
-		historyPath: filepath.Join(cacheDir, "window_history.json"),
+		historyPath: filepath.Join(historyDir, "window_history.json"),
 		history:     &WindowHistory{Windows: make([]WindowRecord, 0)},
 	}
 }

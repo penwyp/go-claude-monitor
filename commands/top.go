@@ -28,6 +28,9 @@ var (
 	// Pricing related flags
 	topPricingSource      string
 	topPricingOfflineMode bool
+	
+	// Window history flags
+	topResetWindows bool
 )
 
 var topCmd = &cobra.Command{
@@ -67,6 +70,10 @@ func init() {
 		"Pricing source (default, litellm)")
 	topCmd.Flags().BoolVar(&topPricingOfflineMode, "pricing-offline", false,
 		"Use offline pricing mode")
+	
+	// Window history flags
+	topCmd.Flags().BoolVar(&topResetWindows, "reset-windows", false,
+		"Reset window history before starting")
 }
 
 func runTop(cmd *cobra.Command, args []string) error {
@@ -81,6 +88,13 @@ func runTop(cmd *cobra.Command, args []string) error {
 	ensureDir(filepath.Dir(logFile))
 	util.InitLogger(logLevel, logFile, debug)
 	util.InitializeTimeProvider(topTimezone)
+
+	// Handle window history reset if requested
+	if topResetWindows {
+		if err := resetWindowHistory(); err != nil {
+			return fmt.Errorf("failed to reset window history: %w", err)
+		}
+	}
 
 	// Handle timezone
 	if topTimezone == "auto" {
@@ -129,4 +143,39 @@ func runTop(cmd *cobra.Command, args []string) error {
 
 		return err
 	}
+}
+
+// resetWindowHistory prompts for confirmation and resets the window history
+func resetWindowHistory() error {
+	// Get history file path
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	
+	historyPath := filepath.Join(homeDir, ".go-claude-monitor", "history", "window_history.json")
+	
+	// Check if file exists
+	if _, err := os.Stat(historyPath); os.IsNotExist(err) {
+		fmt.Println("No window history found. Nothing to reset.")
+		return nil
+	}
+	
+	// Prompt for confirmation
+	fmt.Print("Reset window history? This will clear all learned window boundaries. (y/N): ")
+	var response string
+	fmt.Scanln(&response)
+	
+	if response != "y" && response != "Y" {
+		fmt.Println("Reset cancelled.")
+		return nil
+	}
+	
+	// Remove the file
+	if err := os.Remove(historyPath); err != nil {
+		return fmt.Errorf("failed to remove window history: %w", err)
+	}
+	
+	fmt.Println("Window history reset successfully.")
+	return nil
 }

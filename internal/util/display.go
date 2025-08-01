@@ -98,3 +98,12 @@ func FormatSectionSeparator() string {
 func MoveCursor(row, col int) string {
 	return fmt.Sprintf("\033[%d;%dH", row, col)
 }
+
+// CenterText centers text within the given width
+func CenterText(text string, width int) string {
+	if len(text) >= width {
+		return text[:width]
+	}
+	padding := (width - len(text)) / 2
+	return fmt.Sprintf("%s%s%s", strings.Repeat(" ", padding), text, strings.Repeat(" ", width-padding-len(text)))
+}

@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"github.com/penwyp/go-claude-monitor/internal/core/pricing"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -20,6 +21,7 @@ var (
 	detectTimezone       string
 	detectPricingSource  string
 	detectPricingOffline bool
+	detectResetWindows   bool
 )
 
 var detectCmd = &cobra.Command{
@@ -46,6 +48,10 @@ func init() {
 		"Pricing source (default, litellm)")
 	detectCmd.Flags().BoolVar(&detectPricingOffline, "pricing-offline", false,
 		"Use offline pricing mode")
+	
+	// Window history flags
+	detectCmd.Flags().BoolVar(&detectResetWindows, "reset-windows", false,
+		"Reset window history before analysis")
 
 }
 
@@ -61,6 +67,13 @@ func runDetect(cmd *cobra.Command, args []string) error {
 	ensureDir(filepath.Dir(logFile))
 	util.InitLogger(logLevel, logFile, debug)
 	util.InitializeTimeProvider(detectTimezone)
+	
+	// Handle window history reset if requested
+	if detectResetWindows {
+		if err := resetWindowHistoryQuiet(); err != nil {
+			return fmt.Errorf("failed to reset window history: %w", err)
+		}
+	}
 
 	// Create configuration
 	config := &session.TopConfig{
@@ -188,6 +201,33 @@ func printWindowAnalysis(sessions []*session.Session) {
 					i, i+2, util.FormatDuration(gapDuration))
 			}
 		}
+	}
+	
+	// Show window history stats
+	printWindowHistoryStats()
+}
+
+// printWindowHistoryStats displays window history statistics
+func printWindowHistoryStats() {
+	// Get home directory for display
+	homeDir, _ := os.UserHomeDir()
+	historyPath := filepath.Join(homeDir, ".go-claude-monitor", "history", "window_history.json")
+	
+	fmt.Println("\nWindow History:")
+	fmt.Printf("  File: %s\n", historyPath)
+	
+	// Check if file exists
+	if info, err := os.Stat(historyPath); err == nil {
+		fmt.Printf("  Size: %d bytes\n", info.Size())
+		fmt.Printf("  Modified: %s\n", info.ModTime().Format("2006-01-02 15:04:05"))
+		
+		// Try to get window history stats through detector
+		// Note: This is a simplified approach since we can't directly access the windowHistory
+		fmt.Println("  Use --reset-windows flag to clear history")
+	} else if os.IsNotExist(err) {
+		fmt.Println("  Status: No history file found")
+	} else {
+		fmt.Printf("  Status: Error accessing file: %v\n", err)
 	}
 }
 
@@ -481,4 +521,29 @@ func printModelStatistics(aggregated *model.AggregatedMetrics) {
 		}
 		fmt.Println()
 	}
+}
+
+// resetWindowHistoryQuiet resets window history without prompting
+func resetWindowHistoryQuiet() error {
+	// Get history file path
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	
+	historyPath := filepath.Join(homeDir, ".go-claude-monitor", "history", "window_history.json")
+	
+	// Check if file exists
+	if _, err := os.Stat(historyPath); os.IsNotExist(err) {
+		fmt.Println("No window history found. Nothing to reset.")
+		return nil
+	}
+	
+	// Remove the file
+	if err := os.Remove(historyPath); err != nil {
+		return fmt.Errorf("failed to remove window history: %w", err)
+	}
+	
+	fmt.Println("Window history reset successfully.")
+	return nil
 }

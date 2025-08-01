@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/penwyp/go-claude-monitor/internal/core/pricing"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -432,6 +433,31 @@ func (m *Manager) updateDisplay() {
 }
 
 func (m *Manager) handleKeyboard(event KeyEvent) bool {
+	// Handle confirm dialog inputs first
+	if m.state.ConfirmDialog != nil {
+		switch event.Type {
+		case KeyChar:
+			switch event.Key {
+			case 'y', 'Y':
+				if m.state.ConfirmDialog.OnConfirm != nil {
+					m.state.ConfirmDialog.OnConfirm()
+				}
+				return false
+			case 'n', 'N', 27: // 'n', 'N', or ESC
+				if m.state.ConfirmDialog.OnCancel != nil {
+					m.state.ConfirmDialog.OnCancel()
+				}
+				return false
+			}
+		case KeyEscape:
+			if m.state.ConfirmDialog.OnCancel != nil {
+				m.state.ConfirmDialog.OnCancel()
+			}
+			return false
+		}
+		return false // Ignore other keys when dialog is open
+	}
+
 	switch event.Type {
 	case KeyChar:
 		switch event.Key {
@@ -443,8 +469,8 @@ func (m *Manager) handleKeyboard(event KeyEvent) bool {
 			m.state.ForceRefresh = true
 			m.refreshData()
 		case 'c', 'C':
-			// Clear cache
-			m.clearAndReload()
+			// Clear window history
+			m.clearWindowHistory()
 		case 'p', 'P':
 			// Pause/unpause
 			m.state.IsPaused = !m.state.IsPaused
@@ -501,6 +527,43 @@ func (m *Manager) refreshData() {
 
 	m.loadFiles(files)
 	m.detectSessions()
+}
+
+func (m *Manager) clearWindowHistory() {
+	// Get confirmation from user
+	m.state.ConfirmDialog = &model.ConfirmDialog{
+		Title:   "Clear Window History",
+		Message: "This will clear all learned window boundaries. Continue?",
+		OnConfirm: func() {
+			// Get history file path
+			homeDir, _ := os.UserHomeDir()
+			historyPath := filepath.Join(homeDir, ".go-claude-monitor", "history", "window_history.json")
+			
+			// Remove the file
+			if err := os.Remove(historyPath); err != nil && !os.IsNotExist(err) {
+				util.LogError(fmt.Sprintf("Failed to remove window history: %v", err))
+				m.state.StatusMessage = "Failed to clear window history"
+			} else {
+				util.LogInfo("Window history cleared successfully")
+				m.state.StatusMessage = "Window history cleared"
+				
+				// Reinitialize window history manager
+				if m.detector != nil && m.detector.windowHistory != nil {
+					m.detector.windowHistory = NewWindowHistoryManager(m.config.CacheDir)
+					m.detector.windowHistory.Load()
+				}
+				
+				// Reload data
+				m.refreshData()
+			}
+			
+			// Clear confirm dialog
+			m.state.ConfirmDialog = nil
+		},
+		OnCancel: func() {
+			m.state.ConfirmDialog = nil
+		},
+	}
 }
 
 func (m *Manager) persistCache() {
