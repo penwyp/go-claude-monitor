@@ -195,6 +195,9 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 	// Detect gaps and insert gap sessions (matches Python's logic)
 	sessions = d.insertGapSessions(sessions)
 
+	// Deduplicate sessions before marking active
+	sessions = d.deduplicateSessions(sessions)
+
 	// Mark active sessions (matches Python's _mark_active_blocks)
 	d.markActiveSessions(sessions, nowTimestamp)
 
@@ -202,6 +205,23 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].StartTime > sessions[j].StartTime
 	})
+
+	// Log final session summary
+	util.LogInfo(fmt.Sprintf("DetectSessionsWithLimits: Returning %d sessions:", len(sessions)))
+	for i, s := range sessions {
+		activeStr := ""
+		if s.IsActive {
+			activeStr = " [ACTIVE]"
+		}
+		if s.IsGap {
+			activeStr = " [GAP]"
+		}
+		util.LogInfo(fmt.Sprintf("  Session #%d: ID=%s, Start=%s, End=%s%s",
+			i+1, s.ID,
+			time.Unix(s.StartTime, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(s.EndTime, 0).Format("2006-01-02 15:04:05"),
+			activeStr))
+	}
 
 	return sessions
 }
@@ -537,12 +557,32 @@ func (d *SessionDetector) calculateBurnRate(session *Session, nowTimestamp int64
 // markActiveSessions marks sessions as active if they're still ongoing.
 // This aligns with Python's _mark_active_blocks implementation.
 func (d *SessionDetector) markActiveSessions(sessions []*Session, nowTimestamp int64) {
+	util.LogInfo(fmt.Sprintf("markActiveSessions: Checking %d sessions for active status (nowTimestamp=%d, %s)",
+		len(sessions), nowTimestamp, time.Unix(nowTimestamp, 0).Format("2006-01-02 15:04:05")))
+	
+	activeCount := 0
 	for _, session := range sessions {
 		// Mark session as active if its end time is in the future and it's not a gap
 		if !session.IsGap && session.EndTime > nowTimestamp {
 			session.IsActive = true
+			activeCount++
+			util.LogInfo(fmt.Sprintf("Session %s marked as ACTIVE: EndTime=%s > Now=%s",
+				session.ID,
+				time.Unix(session.EndTime, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(nowTimestamp, 0).Format("2006-01-02 15:04:05")))
+		} else {
+			if session.IsGap {
+				util.LogDebug(fmt.Sprintf("Session %s is a gap, not marking as active", session.ID))
+			} else {
+				util.LogDebug(fmt.Sprintf("Session %s NOT active: EndTime=%s <= Now=%s",
+					session.ID,
+					time.Unix(session.EndTime, 0).Format("2006-01-02 15:04:05"),
+					time.Unix(nowTimestamp, 0).Format("2006-01-02 15:04:05")))
+			}
 		}
 	}
+	
+	util.LogInfo(fmt.Sprintf("markActiveSessions: Marked %d sessions as active out of %d total", activeCount, len(sessions)))
 }
 
 // finalizeSession sets the actual end time and calculates totals
@@ -651,4 +691,58 @@ func (d *SessionDetector) findCachedWindowForTime(timestamp int64, cachedWindows
 	}
 
 	return nil
+}
+
+// deduplicateSessions removes duplicate sessions that cover the same time period
+func (d *SessionDetector) deduplicateSessions(sessions []*Session) []*Session {
+	if len(sessions) <= 1 {
+		return sessions
+	}
+
+	util.LogInfo(fmt.Sprintf("deduplicateSessions: Checking %d sessions for duplicates", len(sessions)))
+
+	// Sort sessions by start time for easier comparison
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].StartTime < sessions[j].StartTime
+	})
+
+	// Keep track of unique sessions
+	uniqueSessions := make([]*Session, 0, len(sessions))
+	sessionMap := make(map[string]*Session)
+
+	for _, session := range sessions {
+		key := fmt.Sprintf("%s-%d-%d", session.ProjectName, session.StartTime, session.EndTime)
+		
+		if existing, exists := sessionMap[key]; exists {
+			// Merge data from duplicate session
+			util.LogInfo(fmt.Sprintf("Found duplicate session: ID=%s and ID=%s (key=%s)", existing.ID, session.ID, key))
+			
+			// Keep the session with more data or better window detection
+			if session.TotalTokens > existing.TotalTokens || 
+			   (session.IsWindowDetected && !existing.IsWindowDetected) ||
+			   (session.WindowSource == "limit_message" && existing.WindowSource != "limit_message") {
+				// Replace with the better session
+				for i, s := range uniqueSessions {
+					if s.ID == existing.ID {
+						uniqueSessions[i] = session
+						break
+					}
+				}
+				sessionMap[key] = session
+				util.LogInfo(fmt.Sprintf("Replaced session %s with %s (better data/detection)", existing.ID, session.ID))
+			}
+		} else {
+			// New unique session
+			uniqueSessions = append(uniqueSessions, session)
+			sessionMap[key] = session
+		}
+	}
+
+	removedCount := len(sessions) - len(uniqueSessions)
+	if removedCount > 0 {
+		util.LogInfo(fmt.Sprintf("deduplicateSessions: Removed %d duplicate sessions, %d unique sessions remain", 
+			removedCount, len(uniqueSessions)))
+	}
+
+	return uniqueSessions
 }

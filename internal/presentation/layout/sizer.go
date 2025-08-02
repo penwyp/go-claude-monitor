@@ -13,6 +13,11 @@ var sharedSizer = &Sizer{}
 type Sizer struct {
 }
 
+// NewSizer creates a new Sizer instance
+func NewSizer() *Sizer {
+	return &Sizer{}
+}
+
 // displayWidth calculates the actual display width of a string containing emojis and Unicode characters
 func (i Sizer) displayWidth(s string) int {
 	return runewidth.StringWidth(s)

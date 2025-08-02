@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -37,5 +38,33 @@ func FormatBurnRate(rate float64) string {
 }
 
 func FormatCurrency(amount float64) string {
-	return fmt.Sprintf("$%.2f", amount)
+	// Format with comma separators for thousands
+	// First format with 2 decimal places
+	str := fmt.Sprintf("%.2f", amount)
+	
+	// Split into integer and decimal parts
+	parts := strings.Split(str, ".")
+	intPart := parts[0]
+	decPart := ""
+	if len(parts) > 1 {
+		decPart = parts[1]
+	}
+	
+	// Add commas to integer part
+	if len(intPart) > 3 {
+		result := ""
+		for i, c := range intPart {
+			if i > 0 && (len(intPart)-i)%3 == 0 {
+				result += ","
+			}
+			result += string(c)
+		}
+		intPart = result
+	}
+	
+	// Combine with decimal part
+	if decPart != "" {
+		return fmt.Sprintf("$%s.%s", intPart, decPart)
+	}
+	return fmt.Sprintf("$%s.00", intPart)
 }
