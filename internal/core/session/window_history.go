@@ -29,12 +29,14 @@ func (w *WindowRecord) populateStringFields() {
 
 // WindowRecord represents a single session window in history
 type WindowRecord struct {
-	StartTime   int64  `json:"start_time"`
-	EndTime     int64  `json:"end_time"`
-	Source      string `json:"source"`       // "limit_message", "gap", "first_message", "rounded_hour"
-	IsConfirmed bool   `json:"is_confirmed"` // true if from limit message
-	SessionID   string `json:"session_id"`
-	CreatedAt   int64  `json:"created_at"`
+	SessionID      string `json:"session_id"`
+	Source         string `json:"source"` // "limit_message", "gap", "first_message", "rounded_hour"
+	StartTime      int64  `json:"start_time"`
+	EndTime        int64  `json:"end_time"`
+	CreatedAt      int64  `json:"created_at"`
+	IsLimitReached bool   `json:"is_limit_reached"` // true if from limit message
+	LimitMessage   string `json:"limit_message,omitempty"` // Original limit message text (e.g., "Claude AI usage limit reached|1751997600")
+	FirstEntryTime int64  `json:"first_entry_time,omitempty"` // Stable first message time for burn rate calculation
 
 	StartTimeStr string `json:"start_time_str"`
 	EndTimeStr   string `json:"end_time_str"`
@@ -142,17 +144,46 @@ func (m *WindowHistoryManager) AddOrUpdateWindow(record WindowRecord) {
 	m.history.mu.Lock()
 	defer m.history.mu.Unlock()
 
-	record.CreatedAt = time.Now().Unix()
+	// Check time validity based on window type
+	currentTime := time.Now().Unix()
+	
+	if record.IsLimitReached {
+		// Limit-reached windows must be historical (not in future)
+		if record.EndTime > currentTime {
+			util.LogWarn(fmt.Sprintf("Rejecting limit-reached window with future end time: %s",
+				time.Unix(record.EndTime, 0).Format("2006-01-02 15:04:05")))
+			return
+		}
+		// Check if it's within 3 days
+		minAllowedTime := currentTime - 3*24*3600
+		if record.EndTime < minAllowedTime {
+			util.LogWarn(fmt.Sprintf("Rejecting old limit-reached window: %s (older than 3 days)",
+				time.Unix(record.EndTime, 0).Format("2006-01-02 15:04:05")))
+			return
+		}
+	} else {
+		// For normal windows, restrict to 5 hours in the future
+		maxAllowedEnd := currentTime + 5*3600
+		if record.EndTime > maxAllowedEnd {
+			util.LogWarn(fmt.Sprintf("Rejecting window record with end time too far in future: %s (max allowed: %s)",
+				time.Unix(record.EndTime, 0).Format("2006-01-02 15:04:05"),
+				time.Unix(maxAllowedEnd, 0).Format("2006-01-02 15:04:05")))
+			return
+		}
+	}
+
+	record.CreatedAt = currentTime
 	// Populate string fields
 	record.populateStringFields()
 
 	// Check if window already exists
 	for i, existing := range m.history.Windows {
 		if existing.SessionID == record.SessionID {
-			// Update existing record, but preserve confirmed status
-			if existing.IsConfirmed && !record.IsConfirmed {
-				record.IsConfirmed = true
+			// Update existing record, but preserve limit reached status and message
+			if existing.IsLimitReached && !record.IsLimitReached {
+				record.IsLimitReached = true
 				record.Source = existing.Source
+				record.LimitMessage = existing.LimitMessage
 			}
 			m.history.Windows[i] = record
 			util.LogDebug(fmt.Sprintf("Updated window record: %s (%s)", record.SessionID, record.Source))
@@ -180,8 +211,8 @@ func (m *WindowHistoryManager) ValidateNewWindow(proposedStart, proposedEnd int6
 
 	// Check against all existing windows
 	for _, record := range m.history.Windows {
-		// Rule 1: New window cannot contain a confirmed end time
-		if record.IsConfirmed && proposedStart < record.EndTime && proposedEnd > record.EndTime {
+		// Rule 1: New window cannot contain a limit-reached end time
+		if record.IsLimitReached && proposedStart < record.EndTime && proposedEnd > record.EndTime {
 			util.LogDebug(fmt.Sprintf("Window validation: Adjusting to avoid confirmed end time %s",
 				time.Unix(record.EndTime, 0).Format("2006-01-02 15:04:05")))
 			// Adjust window to start after confirmed end time
@@ -206,22 +237,35 @@ func (m *WindowHistoryManager) ValidateNewWindow(proposedStart, proposedEnd int6
 		validEnd = validStart + 5*3600
 	}
 
+	// Check if adjusted window is too far in the future
+	currentTime := time.Now().Unix()
+	maxAllowedEnd := currentTime + 5*3600
+	
+	if validEnd > maxAllowedEnd {
+		// Window adjustment would create a future window beyond reasonable range
+		util.LogWarn(fmt.Sprintf("Window validation: Rejected adjustment that would create future window (end: %s, max allowed: %s)",
+			time.Unix(validEnd, 0).Format("2006-01-02 15:04:05"),
+			time.Unix(maxAllowedEnd, 0).Format("2006-01-02 15:04:05")))
+		// Return original proposed window instead
+		return proposedStart, proposedEnd, true
+	}
+
 	isValid = validStart >= proposedStart // Window was adjusted if start time changed
 	return validStart, validEnd, isValid
 }
 
-// GetConfirmedWindows returns all confirmed windows (from limit messages)
-func (m *WindowHistoryManager) GetConfirmedWindows() []WindowRecord {
+// GetLimitReachedWindows returns all windows where limit was reached (from limit messages)
+func (m *WindowHistoryManager) GetLimitReachedWindows() []WindowRecord {
 	m.history.mu.RLock()
 	defer m.history.mu.RUnlock()
 
-	var confirmed []WindowRecord
+	var limitReached []WindowRecord
 	for _, record := range m.history.Windows {
-		if record.IsConfirmed {
-			confirmed = append(confirmed, record)
+		if record.IsLimitReached {
+			limitReached = append(limitReached, record)
 		}
 	}
-	return confirmed
+	return limitReached
 }
 
 // GetRecentWindows returns windows from the last N hours
@@ -241,17 +285,31 @@ func (m *WindowHistoryManager) GetRecentWindows(hours int) []WindowRecord {
 }
 
 // CleanupOldWindows removes windows older than the specified days
+// Special handling: windows with limit reached (IsLimitReached) are retained for at least 3 days
 func (m *WindowHistoryManager) CleanupOldWindows(days int) int {
 	m.history.mu.Lock()
 	defer m.history.mu.Unlock()
 
 	cutoff := time.Now().AddDate(0, 0, -days).Unix()
+	limitWindowCutoff := time.Now().AddDate(0, 0, -3).Unix() // 3 days for limit-reached windows
 	originalCount := len(m.history.Windows)
 
-	// Keep windows that are newer than cutoff or are confirmed
+	// Keep windows based on retention rules:
+	// 1. Regular windows: keep if newer than cutoff
+	// 2. Limit-reached windows: keep if newer than 3 days
 	var kept []WindowRecord
 	for _, record := range m.history.Windows {
-		if record.CreatedAt > cutoff || record.IsConfirmed {
+		shouldKeep := false
+		
+		if record.IsLimitReached {
+			// Limit-reached windows are kept for at least 3 days
+			shouldKeep = record.CreatedAt > limitWindowCutoff
+		} else {
+			// Regular windows follow the standard retention period
+			shouldKeep = record.CreatedAt > cutoff
+		}
+		
+		if shouldKeep {
 			kept = append(kept, record)
 		}
 	}
@@ -260,10 +318,22 @@ func (m *WindowHistoryManager) CleanupOldWindows(days int) int {
 	removed := originalCount - len(kept)
 
 	if removed > 0 {
-		util.LogInfo(fmt.Sprintf("Cleaned up %d old window records (kept %d)", removed, len(kept)))
+		util.LogInfo(fmt.Sprintf("Cleaned up %d old window records (kept %d, including %d limit-reached windows)", 
+			removed, len(kept), m.countLimitReachedWindows(kept)))
 	}
 
 	return removed
+}
+
+// countLimitReachedWindows counts the number of limit-reached windows in a slice
+func (m *WindowHistoryManager) countLimitReachedWindows(windows []WindowRecord) int {
+	count := 0
+	for _, record := range windows {
+		if record.IsLimitReached {
+			count++
+		}
+	}
+	return count
 }
 
 // FindOverlappingWindow finds any window that overlaps with the given time range
@@ -280,28 +350,30 @@ func (m *WindowHistoryManager) FindOverlappingWindow(start, end int64) *WindowRe
 }
 
 // UpdateFromLimitMessage updates window history based on a limit message
-func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTime int64) {
+func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTime int64, limitMessage string) {
 	// Calculate window boundaries from reset time
 	windowEnd := resetTime
 	windowStart := windowEnd - 5*3600
 
 	record := WindowRecord{
-		StartTime:   windowStart,
-		EndTime:     windowEnd,
-		Source:      "limit_message",
-		IsConfirmed: true,
-		SessionID:   fmt.Sprintf("%d", windowStart),
-		CreatedAt:   time.Now().Unix(),
+		StartTime:      windowStart,
+		EndTime:        windowEnd,
+		Source:         "limit_message",
+		IsLimitReached: true,
+		LimitMessage:   limitMessage,
+		SessionID:      fmt.Sprintf("%d", windowStart),
+		CreatedAt:      time.Now().Unix(),
 	}
-	
+
 	// Populate string fields
 	record.populateStringFields()
 
 	m.AddOrUpdateWindow(record)
 
-	util.LogInfo(fmt.Sprintf("Updated window history from limit message: %s to %s",
+	util.LogInfo(fmt.Sprintf("Updated window history from limit message: %s to %s (message: %s)",
 		time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
-		time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05")))
+		time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05"),
+		limitMessage))
 }
 
 // GetWindowForTime finds the window that contains the given timestamp

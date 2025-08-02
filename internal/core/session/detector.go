@@ -81,7 +81,7 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 				// Find the limit with reset time
 				for _, limit := range limits {
 					if limit.ResetTime != nil {
-						d.windowHistory.UpdateFromLimitMessage(*limit.ResetTime, limit.Timestamp)
+						d.windowHistory.UpdateFromLimitMessage(*limit.ResetTime, limit.Timestamp, limit.Content)
 						break
 					}
 				}
@@ -151,6 +151,13 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 					util.LogDebug(fmt.Sprintf("Cached window details - WindowStart: %s, Source: %s",
 						time.Unix(*cachedWindow.WindowStartTime, 0).Format("2006-01-02 15:04:05"),
 						cachedWindow.WindowSource))
+				}
+				// Use cached FirstEntryTime if available to ensure stable burn rate calculations
+				if cachedWindow.FirstEntryTime > 0 && cachedWindow.FirstEntryTime < item.FirstEntryTime {
+					util.LogInfo(fmt.Sprintf("Using cached FirstEntryTime: %s instead of %s for stable burn rate",
+						time.Unix(cachedWindow.FirstEntryTime, 0).Format("2006-01-02 15:04:05"),
+						time.Unix(item.FirstEntryTime, 0).Format("2006-01-02 15:04:05")))
+					item.FirstEntryTime = cachedWindow.FirstEntryTime
 				}
 			}
 
@@ -257,15 +264,25 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 	// Validate window against history
 	if d.windowHistory != nil {
 		validStart, validEnd, wasAdjusted := d.windowHistory.ValidateNewWindow(windowStart, windowEnd)
-		if wasAdjusted {
-			util.LogInfo(fmt.Sprintf("Window adjusted by history: original %s-%s, adjusted to %s-%s",
-				time.Unix(windowStart, 0).Format("15:04:05"),
-				time.Unix(windowEnd, 0).Format("15:04:05"),
-				time.Unix(validStart, 0).Format("15:04:05"),
-				time.Unix(validEnd, 0).Format("15:04:05")))
-			windowStart = validStart
-			windowEnd = validEnd
-			windowStartTime = windowStart
+		if !wasAdjusted {
+			// Window was adjusted by history
+			currentTime := time.Now().Unix()
+			maxAllowedEnd := currentTime + 5*3600
+			
+			// Only apply adjustment if it doesn't create a future window
+			if validEnd <= maxAllowedEnd {
+				util.LogInfo(fmt.Sprintf("Window adjusted by history: original %s-%s, adjusted to %s-%s",
+					time.Unix(windowStart, 0).Format("15:04:05"),
+					time.Unix(windowEnd, 0).Format("15:04:05"),
+					time.Unix(validStart, 0).Format("15:04:05"),
+					time.Unix(validEnd, 0).Format("15:04:05")))
+				windowStart = validStart
+				windowEnd = validEnd
+				windowStartTime = windowStart
+			} else {
+				util.LogWarn(fmt.Sprintf("Ignoring window adjustment that would create future window: %s",
+					time.Unix(validEnd, 0).Format("2006-01-02 15:04:05")))
+			}
 		}
 	}
 
@@ -282,14 +299,19 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 	// Add window to history
 	if d.windowHistory != nil {
 		record := WindowRecord{
-			StartTime:   windowStart,
-			EndTime:     windowEnd,
-			Source:      windowSource,
-			IsConfirmed: false,
-			SessionID:   sessionID,
+			StartTime:      windowStart,
+			EndTime:        windowEnd,
+			Source:         windowSource,
+			IsLimitReached: false,
+			SessionID:      sessionID,
 		}
 		d.windowHistory.AddOrUpdateWindow(record)
 	}
+
+	// Log FirstEntryTime for debugging burn rate issues
+	util.LogInfo(fmt.Sprintf("Created session %s with FirstEntryTime: %s (from HourlyData)",
+		sessionID,
+		time.Unix(firstData.FirstEntryTime, 0).Format("2006-01-02 15:04:05")))
 
 	return &Session{
 		ID:                sessionID,
@@ -387,9 +409,19 @@ func (d *SessionDetector) addDataToSession(session *Session, data aggregator.Hou
 }
 
 func (d *SessionDetector) calculateMetrics(session *Session, nowTimestamp int64) {
-	// Use FirstEntryTime for more accurate burn rate calculation if available
+	// For burn rate calculation, prefer using WindowStartTime for detected windows
+	// as it's more stable than FirstEntryTime which can vary between data loads
 	startTimeForCalc := session.StartTime
-	if session.FirstEntryTime > 0 && session.FirstEntryTime > session.StartTime {
+	
+	if session.IsWindowDetected && session.WindowStartTime != nil {
+		// Use the detected window start time for most accurate calculation
+		startTimeForCalc = *session.WindowStartTime
+		util.LogDebug(fmt.Sprintf("Session %s - Using WindowStartTime for calc: %s (source: %s)",
+			session.ID,
+			time.Unix(startTimeForCalc, 0).Format("2006-01-02 15:04:05"),
+			session.WindowSource))
+	} else if session.FirstEntryTime > 0 && session.FirstEntryTime > session.StartTime {
+		// Fallback to FirstEntryTime if no window detected
 		startTimeForCalc = session.FirstEntryTime
 		util.LogDebug(fmt.Sprintf("Session %s - Using FirstEntryTime for calc: %s instead of StartTime: %s",
 			session.ID,

@@ -387,14 +387,28 @@ func (m *Manager) detectSessions() {
 		m.calculator.Calculate(session)
 
 		// Store window detection info back to cache if detected
+		// Only cache windows that are not too far in the future (max 5 hours ahead)
+		currentTime := time.Now().Unix()
+		maxFutureTime := currentTime + 5*3600
+		
 		if session.IsWindowDetected && session.WindowStartTime != nil {
-			windowInfo := &WindowDetectionInfo{
-				WindowStartTime:  session.WindowStartTime,
-				IsWindowDetected: session.IsWindowDetected,
-				WindowSource:     session.WindowSource,
-				DetectedAt:       time.Now().Unix(),
+			// Check if window end time is not too far in the future
+			windowEndTime := *session.WindowStartTime + 5*3600
+			if windowEndTime <= maxFutureTime {
+				windowInfo := &WindowDetectionInfo{
+					WindowStartTime:  session.WindowStartTime,
+					IsWindowDetected: session.IsWindowDetected,
+					WindowSource:     session.WindowSource,
+					DetectedAt:       currentTime,
+					FirstEntryTime:   session.FirstEntryTime,
+				}
+				m.memoryCache.UpdateWindowInfo(session.ID, windowInfo)
+			} else {
+				util.LogWarn(fmt.Sprintf("Skipping cache for future window: %s (ends at %s, max allowed %s)",
+					session.ID,
+					time.Unix(windowEndTime, 0).Format("2006-01-02 15:04:05"),
+					time.Unix(maxFutureTime, 0).Format("2006-01-02 15:04:05")))
 			}
-			m.memoryCache.UpdateWindowInfo(session.ID, windowInfo)
 		}
 	}
 

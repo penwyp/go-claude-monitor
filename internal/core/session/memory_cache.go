@@ -14,6 +14,7 @@ type WindowDetectionInfo struct {
 	IsWindowDetected bool   // Whether window was explicitly detected
 	WindowSource     string // Detection source: "limit_message", "gap", "first_message", "rounded_hour"
 	DetectedAt       int64  // When this detection occurred
+	FirstEntryTime   int64  // Stable first message time for burn rate calculation
 }
 
 // MemoryCacheEntry extends AggregatedData with access time tracking
