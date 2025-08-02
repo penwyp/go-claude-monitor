@@ -162,6 +162,23 @@ func (aggregated AggregatedMetrics) GetCostPercentage() float64 {
 	return percentage
 }
 
+// FormatRemainingTime calculates and formats the time remaining until reset
+func (aggregated AggregatedMetrics) FormatRemainingTime() string {
+	if aggregated.ResetTime == 0 {
+		return "No active session"
+	}
+	
+	now := util.GetTimeProvider().Now()
+	resetTime := time.Unix(aggregated.ResetTime, 0)
+	remaining := resetTime.Sub(now)
+	
+	if remaining <= 0 {
+		return "Expired"
+	}
+	
+	return util.FormatDuration(remaining)
+}
+
 // ModelStats contains statistics for a specific model
 type ModelStats struct {
 	Model  string

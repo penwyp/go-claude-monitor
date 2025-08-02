@@ -14,6 +14,7 @@ type WindowDetectionInfo struct {
 	IsWindowDetected bool   // Whether window was explicitly detected
 	WindowSource     string // Detection source: "limit_message", "gap", "first_message", "rounded_hour"
 	DetectedAt       int64  // When this detection occurred
+	FirstEntryTime   int64  // Stable first message time for burn rate calculation
 }
 
 // MemoryCacheEntry extends AggregatedData with access time tracking
@@ -132,4 +133,27 @@ func (mc *MemoryCache) UpdateWindowInfo(sessionId string, windowInfo *WindowDete
 		entry.WindowInfo = windowInfo
 		entry.IsDirty = true
 	}
+}
+
+// GetHistoricalLogs retrieves raw logs for a specified duration
+// This is used to find historical limit messages
+func (mc *MemoryCache) GetHistoricalLogs(duration int64) []model.ConversationLog {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	cutoff := time.Now().Unix() - duration
+	var rawLogs []model.ConversationLog
+
+	for _, entry := range mc.entries {
+		if entry.RawLogs != nil {
+			for _, log := range entry.RawLogs {
+				ts, err := time.Parse(time.RFC3339, log.Timestamp)
+				if err == nil && ts.Unix() > cutoff {
+					rawLogs = append(rawLogs, log)
+				}
+			}
+		}
+	}
+
+	return rawLogs
 }

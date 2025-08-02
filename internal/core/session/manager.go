@@ -15,6 +15,7 @@ import (
 	"github.com/penwyp/go-claude-monitor/internal/data/cache"
 	"github.com/penwyp/go-claude-monitor/internal/data/parser"
 	"github.com/penwyp/go-claude-monitor/internal/data/scanner"
+	"github.com/penwyp/go-claude-monitor/internal/core/constants"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 )
 
@@ -102,7 +103,7 @@ func NewManager(config *TopConfig) *Manager {
 func (m *Manager) LoadAndAnalyzeData() ([]*Session, error) {
 	// Initialize global time provider with configured timezone
 	if err := util.InitializeTimeProvider(m.config.Timezone); err != nil {
-		util.LogWarn(fmt.Sprintf("Failed to initialize timezone %s: %v, using local time", m.config.Timezone, err))
+		return nil, fmt.Errorf("failed to initialize timezone: %w", err)
 	}
 
 	// Preload data
@@ -132,7 +133,7 @@ func (m *Manager) Run(ctx context.Context) error {
 
 	// Initialize global time provider with configured timezone
 	if err := util.InitializeTimeProvider(m.config.Timezone); err != nil {
-		util.LogWarn(fmt.Sprintf("Failed to initialize timezone %s: %v, using local time", m.config.Timezone, err))
+		return fmt.Errorf("failed to initialize timezone: %w", err)
 	}
 
 	// Phase 1: Preload data (reuse cache.Preload)
@@ -368,6 +369,18 @@ func (m *Manager) detectSessions() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// First, load historical limit windows from the past 1 day
+	// This ensures we have the most accurate windows from limit messages
+	if m.detector.windowHistory != nil {
+		historicalLogs := m.memoryCache.GetHistoricalLogs(constants.HistoricalScanSeconds) // Historical scan period
+		if len(historicalLogs) > 0 {
+			addedCount := m.detector.windowHistory.LoadHistoricalLimitWindows(historicalLogs)
+			if addedCount > 0 {
+				util.LogInfo(fmt.Sprintf("Loaded %d historical limit windows from past %d day", addedCount, constants.HistoricalScanDays))
+			}
+		}
+	}
+
 	// Get all data within 6 hours from memory cache to ensure complete 5-hour sessions
 	hourlyData, rawLogs := m.memoryCache.GetRecentDataWithLogs(6 * 3600)
 
@@ -387,14 +400,28 @@ func (m *Manager) detectSessions() {
 		m.calculator.Calculate(session)
 
 		// Store window detection info back to cache if detected
+		// Only cache windows that are not too far in the future (max session duration ahead)
+		currentTime := time.Now().Unix()
+		maxFutureTime := currentTime + constants.MaxFutureWindowSeconds
+		
 		if session.IsWindowDetected && session.WindowStartTime != nil {
-			windowInfo := &WindowDetectionInfo{
-				WindowStartTime:  session.WindowStartTime,
-				IsWindowDetected: session.IsWindowDetected,
-				WindowSource:     session.WindowSource,
-				DetectedAt:       time.Now().Unix(),
+			// Check if window end time is not too far in the future
+			windowEndTime := *session.WindowStartTime + constants.SessionDurationSeconds
+			if windowEndTime <= maxFutureTime {
+				windowInfo := &WindowDetectionInfo{
+					WindowStartTime:  session.WindowStartTime,
+					IsWindowDetected: session.IsWindowDetected,
+					WindowSource:     session.WindowSource,
+					DetectedAt:       currentTime,
+					FirstEntryTime:   session.FirstEntryTime,
+				}
+				m.memoryCache.UpdateWindowInfo(session.ID, windowInfo)
+			} else {
+				util.LogWarn(fmt.Sprintf("Skipping cache for future window: %s (ends at %s, max allowed %s)",
+					session.ID,
+					time.Unix(windowEndTime, 0).Format("2006-01-02 15:04:05"),
+					time.Unix(maxFutureTime, 0).Format("2006-01-02 15:04:05")))
 			}
-			m.memoryCache.UpdateWindowInfo(session.ID, windowInfo)
 		}
 	}
 
@@ -442,17 +469,23 @@ func (m *Manager) handleKeyboard(event KeyEvent) bool {
 				if m.state.ConfirmDialog.OnConfirm != nil {
 					m.state.ConfirmDialog.OnConfirm()
 				}
+				// Clear screen after dialog is dismissed
+				m.display.ClearScreen()
 				return false
 			case 'n', 'N', 27: // 'n', 'N', or ESC
 				if m.state.ConfirmDialog.OnCancel != nil {
 					m.state.ConfirmDialog.OnCancel()
 				}
+				// Clear screen after dialog is dismissed
+				m.display.ClearScreen()
 				return false
 			}
 		case KeyEscape:
 			if m.state.ConfirmDialog.OnCancel != nil {
 				m.state.ConfirmDialog.OnCancel()
 			}
+			// Clear screen after dialog is dismissed
+			m.display.ClearScreen()
 			return false
 		}
 		return false // Ignore other keys when dialog is open
@@ -545,7 +578,6 @@ func (m *Manager) clearWindowHistory() {
 				m.state.StatusMessage = "Failed to clear window history"
 			} else {
 				util.LogInfo("Window history cleared successfully")
-				m.state.StatusMessage = "Window history cleared"
 				
 				// Reinitialize window history manager
 				if m.detector != nil && m.detector.windowHistory != nil {

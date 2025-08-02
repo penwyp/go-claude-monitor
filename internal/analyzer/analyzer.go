@@ -44,7 +44,14 @@ type Analyzer struct {
 // extractSessionId extracts the session ID from a file path.
 // For example: "/path/to/00aec530-0614-436f-a53b-faaa0b32f123.jsonl" -> "00aec530-0614-436f-a53b-faaa0b32f123"
 func extractSessionId(filePath string) string {
-	filename := filepath.Base(filePath)
+	// Handle both Unix and Windows path separators
+	filename := filePath
+	if idx := strings.LastIndex(filename, "/"); idx != -1 {
+		filename = filename[idx+1:]
+	}
+	if idx := strings.LastIndex(filename, "\\"); idx != -1 {
+		filename = filename[idx+1:]
+	}
 	return strings.TrimSuffix(filename, filepath.Ext(filename))
 }
 

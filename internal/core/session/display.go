@@ -95,10 +95,17 @@ func (td *TerminalDisplay) RenderWithState(sessions []*Session, state model.Inte
 		td.renderConfirmDialog(state.ConfirmDialog)
 		return
 	}
-	
+
 	// Show help if requested
 	if state.ShowHelp {
-		td.ClearScreen()
+		// Use smart rendering for help to preserve text selection
+		if !td.previousShowHelp {
+			// Only clear screen on first entry to help
+			td.ClearScreen()
+		} else {
+			// Just move cursor home for updates
+			fmt.Print(util.MoveCursorHome)
+		}
 		td.renderHelp()
 		td.previousShowHelp = true
 		return
@@ -120,7 +127,7 @@ func (td *TerminalDisplay) RenderWithState(sessions []*Session, state model.Inte
 	} else {
 		layoutStrategy.Render(aggregated, layoutParam)
 	}
-	
+
 	// Show status message if present
 	if state.StatusMessage != "" {
 		td.renderStatusMessage(state.StatusMessage)
@@ -288,6 +295,9 @@ func (td *TerminalDisplay) renderHelp() {
 	// Move cursor to home position first
 	fmt.Print(util.MoveCursorHome)
 
+	// Save cursor for smart rendering
+	fmt.Print(util.SaveCursor)
+
 	fmt.Println("Claude Monitor Top - Help")
 	fmt.Println(strings.Repeat("═", 80))
 	fmt.Println()
@@ -311,38 +321,40 @@ func (td *TerminalDisplay) renderHelp() {
 	fmt.Println("  🔴 Red    - Critical (above 90% of limit)")
 	fmt.Println()
 	fmt.Println(strings.Repeat("═", 80))
-	fmt.Println("Press any key to return...")
+	fmt.Println("Press 'h' to return...")
 
-	// Clear remaining lines to ensure no dashboard content shows through
-	for i := 0; i < 10; i++ {
-		fmt.Println(strings.Repeat(" ", 80))
-	}
+	// Instead of clearing remaining lines, just clear from cursor to end of screen
+	// This preserves text selection while ensuring clean display
+	fmt.Print("\033[J") // Clear from cursor to end of screen
+
+	// Restore cursor position
+	fmt.Print(util.RestoreCursor)
 }
 
 func (td *TerminalDisplay) renderConfirmDialog(dialog *model.ConfirmDialog) {
 	// Clear screen for dialog
 	td.ClearScreen()
-	
+
 	// Center the dialog
 	termWidth := 80 // Assume 80 chars width
 	boxWidth := 60
 	padding := (termWidth - boxWidth) / 2
-	
+
 	// Move cursor down a bit
 	fmt.Print("\n\n\n\n\n")
-	
+
 	// Draw dialog box
 	fmt.Printf("%s╔%s╗\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
 	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), util.CenterText(dialog.Title, boxWidth-2))
 	fmt.Printf("%s╠%s╣\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
 	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), strings.Repeat(" ", boxWidth-2))
-	
+
 	// Wrap message text
 	messageLines := wrapText(dialog.Message, boxWidth-4)
 	for _, line := range messageLines {
 		fmt.Printf("%s║ %s%s ║\n", strings.Repeat(" ", padding), line, strings.Repeat(" ", boxWidth-4-len(line)))
 	}
-	
+
 	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), strings.Repeat(" ", boxWidth-2))
 	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), util.CenterText("(Y)es / (N)o", boxWidth-2))
 	fmt.Printf("%s╚%s╝\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
@@ -351,15 +363,15 @@ func (td *TerminalDisplay) renderConfirmDialog(dialog *model.ConfirmDialog) {
 func (td *TerminalDisplay) renderStatusMessage(message string) {
 	// Save cursor position
 	fmt.Print(util.SaveCursor)
-	
+
 	// Move to bottom of screen
 	fmt.Print("\033[999;1H") // Move to row 999 (will stop at bottom)
 	fmt.Print("\033[1A")     // Move up one line
-	
+
 	// Clear line and print status
 	fmt.Print(util.ClearLine)
 	fmt.Printf("  Status: %s", message)
-	
+
 	// Restore cursor position
 	fmt.Print(util.RestoreCursor)
 }
@@ -369,11 +381,11 @@ func wrapText(text string, width int) []string {
 	if len(text) <= width {
 		return []string{text}
 	}
-	
+
 	var lines []string
 	words := strings.Fields(text)
 	currentLine := ""
-	
+
 	for _, word := range words {
 		if currentLine == "" {
 			currentLine = word
@@ -384,10 +396,10 @@ func wrapText(text string, width int) []string {
 			currentLine = word
 		}
 	}
-	
+
 	if currentLine != "" {
 		lines = append(lines, currentLine)
 	}
-	
+
 	return lines
 }

@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -13,17 +14,25 @@ type TimeProvider struct {
 
 var (
 	globalTimeProvider *TimeProvider
-	once               sync.Once
+	mu                 sync.Mutex
 )
 
 // InitializeTimeProvider initializes the global time provider with the specified timezone
 func InitializeTimeProvider(timezone string) error {
-	var err error
-	once.Do(func() {
-		globalTimeProvider = &TimeProvider{}
-		err = globalTimeProvider.SetTimezone(timezone)
-	})
-	return err
+	mu.Lock()
+	defer mu.Unlock()
+	
+	// Create a new provider
+	provider := &TimeProvider{}
+	
+	// Try to set the timezone
+	if err := provider.SetTimezone(timezone); err != nil {
+		return err
+	}
+	
+	// Only set the global provider if successful
+	globalTimeProvider = provider
+	return nil
 }
 
 // GetTimeProvider returns the global time provider instance
@@ -44,7 +53,8 @@ func (tp *TimeProvider) SetTimezone(timezone string) error {
 	if timezone != "" && timezone != "Local" {
 		l, err := time.LoadLocation(timezone)
 		if err != nil {
-			return err
+			// Provide helpful error message with examples
+			return fmt.Errorf("invalid timezone '%s': %w\nValid examples: Local, UTC, America/New_York, Asia/Shanghai, Europe/London, Australia/Sydney", timezone, err)
 		}
 		loc = l
 	}

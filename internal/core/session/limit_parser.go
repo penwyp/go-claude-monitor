@@ -191,7 +191,7 @@ func (p *LimitParser) parseToolResult(item model.ContentItem, log model.Conversa
 	}
 
 	contentLower := strings.ToLower(contentStr)
-	if !strings.Contains(contentLower, "limit reached") {
+	if !strings.Contains(contentLower, "claude ai usage limit reached") {
 		return nil
 	}
 
@@ -233,9 +233,7 @@ func (p *LimitParser) parseTextContent(text string, log model.ConversationLog, m
 	textLower := strings.ToLower(text)
 
 	// Check if this is a limit message
-	if !strings.Contains(textLower, "limit reached") &&
-		!strings.Contains(textLower, "rate limit") &&
-		!strings.Contains(textLower, "limit exceeded") {
+	if !strings.Contains(textLower, "claude ai usage limit reached") {
 		return nil
 	}
 
@@ -278,7 +276,7 @@ func (p *LimitParser) parseTextContent(text string, log model.ConversationLog, m
 // DetectWindowFromLimits analyzes limit messages to determine window start times
 func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *int64, source string) {
 	util.LogDebug(fmt.Sprintf("DetectWindowFromLimits: Analyzing %d limits", len(limits)))
-	
+
 	if len(limits) == 0 {
 		return nil, ""
 	}
@@ -294,7 +292,7 @@ func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *i
 				limit.Type,
 				time.Unix(limit.Timestamp, 0).Format("2006-01-02 15:04:05"),
 				time.Unix(*limit.ResetTime, 0).Format("2006-01-02 15:04:05")))
-			
+
 			if bestLimit == nil || limit.Timestamp > bestLimit.Timestamp {
 				bestLimit = limit
 			}

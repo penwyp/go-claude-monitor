@@ -187,9 +187,9 @@ func (s *FullLayoutStrategy) performanceSection(aggregated *model.AggregatedMetr
 	// Performance metrics - two columns with dynamic width calculation
 	// First, collect all content to find the maximum widths
 	leftCol1 := fmt.Sprintf("⚡ Burn Rate: %s", util.FormatBurnRate(aggregated.TokenBurnRate))
-	rightCol1 := fmt.Sprintf("💲 Cost Rate: $%.2f/min", aggregated.CostPerMinute)
-	leftCol2 := fmt.Sprintf("⏱️  Time to Reset: %s", resetAt)
-	rightCol2 := fmt.Sprintf("🔥 Active: %d sessions", aggregated.ActiveSessions)
+	leftCol2 := fmt.Sprintf("💲 Cost Rate: $%.2f/min", aggregated.CostPerMinute)
+	rightCol1 := fmt.Sprintf("⏰️ Time Left: %s", aggregated.FormatRemainingTime())
+	rightCol2 := fmt.Sprintf("⏰️ Reset At: %s", resetAt)
 
 	// Calculate the display widths
 	leftWidth1 := getDisplayWidth(leftCol1)

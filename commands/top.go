@@ -106,6 +106,11 @@ func runTop(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("refresh-per-second must be between 0.1 and 20")
 	}
 
+	// Validate time format
+	if topTimeFormat != "12h" && topTimeFormat != "24h" {
+		return fmt.Errorf("invalid time format '%s': must be either '12h' or '24h'", topTimeFormat)
+	}
+
 	// Create configuration
 	config := &session.TopConfig{
 		DataDir:             expandPath(dataDir),
