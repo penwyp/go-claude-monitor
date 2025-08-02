@@ -41,8 +41,10 @@ func (mc *MemoryCache) Set(sessionId string, entry *MemoryCacheEntry) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
-	entry.LastAccessed = time.Now().Unix()
-	entry.IsDirty = true
+	if entry != nil {
+		entry.LastAccessed = time.Now().Unix()
+		entry.IsDirty = true
+	}
 	mc.entries[sessionId] = entry
 }
 
@@ -51,7 +53,7 @@ func (mc *MemoryCache) Get(sessionId string) (*MemoryCacheEntry, bool) {
 	defer mc.mu.RUnlock()
 
 	entry, ok := mc.entries[sessionId]
-	if ok {
+	if ok && entry != nil {
 		entry.LastAccessed = time.Now().Unix()
 	}
 	return entry, ok

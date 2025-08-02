@@ -1,0 +1,122 @@
+{
+    "parentUuid": "be32885e-1167-4d43-981d-ee839f68662a",
+    "isSidechain": true,
+    "userType": "external",
+    "cwd": "/Users/penwyp/go/src/github.com/penwyp/go-claude-monitor",
+    "sessionId": "b2ee291c-b3a5-4679-9bae-c1f87d012098",
+    "version": "1.0.67",
+    "gitBranch": "main",
+    "type": "assistant",
+    "uuid": "b37700ef-78cb-47d4-99ee-74fa77080ab0",
+    "timestamp": "2025-08-02T13:10:26.665Z",
+    "message": {
+        "id": "d18d8e9c-5bfc-406a-b9d9-7dfb375ecfb8",
+        "model": "<synthetic>",
+        "role": "assistant",
+        "stop_reason": "stop_sequence",
+        "stop_sequence": "",
+        "type": "message",
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "server_tool_use": {
+                "web_search_requests": 0
+            },
+            "service_tier": null
+        },
+        "content": [
+            {
+                "type": "text",
+                "text": "Claude AI usage limit reached|1754146800"
+            }
+        ]
+    },
+    "isApiErrorMessage": true
+}
+{
+    "parentUuid": "6274f219-2844-40d3-a5be-e767055f0dac",
+    "isSidechain": false,
+    "userType": "external",
+    "cwd": "/Users/penwyp/go/src/github.com/penwyp/go-claude-monitor",
+    "sessionId": "b2ee291c-b3a5-4679-9bae-c1f87d012098",
+    "version": "1.0.67",
+    "gitBranch": "main",
+    "type": "user",
+    "message": {
+        "role": "user",
+        "content": [
+            {
+                "tool_use_id": "toolu_012tNj6WfGKi7Y8PVtsAyn8f",
+                "type": "tool_result",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Claude AI usage limit reached|1754146800"
+                    }
+                ]
+            }
+        ]
+    },
+    "uuid": "4ade37b5-9967-4991-959a-cb6fcb55e993",
+    "timestamp": "2025-08-02T13:10:26.688Z",
+    "toolUseResult": {
+        "content": [
+            {
+                "type": "text",
+                "text": "Claude AI usage limit reached|1754146800"
+            }
+        ],
+        "totalDurationMs": 149548,
+        "totalTokens": 0,
+        "totalToolUseCount": 19,
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "server_tool_use": {
+                "web_search_requests": 0
+            },
+            "service_tier": null
+        }
+    }
+}
+{
+    "parentUuid": "4ade37b5-9967-4991-959a-cb6fcb55e993",
+    "isSidechain": false,
+    "userType": "external",
+    "cwd": "/Users/penwyp/go/src/github.com/penwyp/go-claude-monitor",
+    "sessionId": "b2ee291c-b3a5-4679-9bae-c1f87d012098",
+    "version": "1.0.67",
+    "gitBranch": "main",
+    "type": "assistant",
+    "uuid": "e485caa2-3d58-421e-9e9b-a4123c8e6815",
+    "timestamp": "2025-08-02T13:10:27.961Z",
+    "message": {
+        "id": "e444e3d3-fbf1-4c64-9b3d-56a3711dde0e",
+        "model": "<synthetic>",
+        "role": "assistant",
+        "stop_reason": "stop_sequence",
+        "stop_sequence": "",
+        "type": "message",
+        "usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "server_tool_use": {
+                "web_search_requests": 0
+            },
+            "service_tier": null
+        },
+        "content": [
+            {
+                "type": "text",
+                "text": "Claude AI usage limit reached|1754146800"
+            }
+        ]
+    },
+    "isApiErrorMessage": true
+}

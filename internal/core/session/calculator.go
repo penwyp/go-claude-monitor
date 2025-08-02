@@ -17,6 +17,10 @@ func NewMetricsCalculator(limits pricing.Plan) *MetricsCalculator {
 }
 
 func (c *MetricsCalculator) Calculate(session *Session) {
+	if session == nil {
+		return
+	}
+
 	// Sort hourly metrics by time
 	sort.Slice(session.HourlyMetrics, func(i, j int) bool {
 		return session.HourlyMetrics[i].Hour.Before(session.HourlyMetrics[j].Hour)
