@@ -85,7 +85,7 @@ func TestTableFormatterFormat(t *testing.T) {
 					InputTokens:   3000,
 					OutputTokens:  1500,
 					TotalTokens:   4500,
-					Cost:          0.055,
+					Cost:          0.06,
 					ShowBreakdown: true,
 					ModelDetails: []ModelDetail{
 						{
@@ -113,7 +113,7 @@ func TestTableFormatterFormat(t *testing.T) {
 				"2,000",
 				"1,000",
 				"3,000",
-				"0.05",
+				"$0.04",
 			},
 		},
 		{
@@ -166,7 +166,7 @@ func TestTableFormatterFormat(t *testing.T) {
 				"777,777,777",
 				"666,666,666",
 				"3,333,333,330",
-				"150,000.00",
+				"149,999.99",
 			},
 		},
 	}

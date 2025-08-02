@@ -293,7 +293,7 @@ func formatNumber(n int) string {
 }
 
 func formatCost(cost float64) string {
-	return fmt.Sprintf("$%.2f", cost)
+	return util.FormatCurrency(cost)
 }
 
 // filterNonZeroTokenModels filters out synthetic models that have zero tokens

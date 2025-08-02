@@ -11,11 +11,16 @@ import (
 var sharedSizer = &Sizer{}
 
 type Sizer struct {
+	Width  int
+	Height int
 }
 
 // NewSizer creates a new Sizer instance
-func NewSizer() *Sizer {
-	return &Sizer{}
+func NewSizer(width int, height int) *Sizer {
+	return &Sizer{
+		Width:  width,
+		Height: height,
+	}
 }
 
 // displayWidth calculates the actual display width of a string containing emojis and Unicode characters

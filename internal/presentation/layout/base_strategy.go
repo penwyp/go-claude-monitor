@@ -69,9 +69,14 @@ func (b *BaseStrategy) FormatCurrency(amount float64) string {
 	return util.FormatCurrency(amount)
 }
 
-// ProgressBar creates a progress bar
-func (b *BaseStrategy) ProgressBar(percentage float64, width int) string {
-	return util.CreateProgressBar(percentage, width)
+// ProgressBar creates a progress bar with optional label
+func (b *BaseStrategy) ProgressBar(percentage float64, width int, label string) string {
+	bar := util.CreateProgressBar(percentage, width)
+	if label != "" {
+		// Add label to the progress bar if provided
+		return fmt.Sprintf("%s %s", bar, label)
+	}
+	return bar
 }
 
 // GetModelIcon returns the icon for a model
@@ -89,17 +94,37 @@ func (b *BaseStrategy) GetModelIcon(model string) string {
 }
 
 // FormatCostInfo formats cost information
-func (b *BaseStrategy) FormatCostInfo(cost float64, limit float64, percentage float64) string {
+func (b *BaseStrategy) FormatCostInfo(metrics *model.AggregatedMetrics, params model.LayoutParam) string {
+	percentage := 0.0
+	if metrics.CostLimit > 0 {
+		percentage = (metrics.TotalCost / metrics.CostLimit) * 100
+	}
 	return fmt.Sprintf("💰 Cost: %s / %s (%.1f%%)", 
-		util.FormatCurrency(cost), 
-		util.FormatCurrency(limit), 
+		util.FormatCurrency(metrics.TotalCost), 
+		util.FormatCurrency(metrics.CostLimit), 
 		percentage)
 }
 
 // FormatTokenInfo formats token information
-func (b *BaseStrategy) FormatTokenInfo(tokens int, limit int, percentage float64) string {
+func (b *BaseStrategy) FormatTokenInfo(metrics *model.AggregatedMetrics, params model.LayoutParam) string {
+	percentage := 0.0
+	if metrics.TokenLimit > 0 {
+		percentage = (float64(metrics.TotalTokens) / float64(metrics.TokenLimit)) * 100
+	}
 	return fmt.Sprintf("🔤 Tokens: %s / %s (%.1f%%)", 
-		util.FormatNumber(tokens), 
-		util.FormatNumber(limit), 
+		util.FormatNumber(metrics.TotalTokens), 
+		util.FormatNumber(metrics.TokenLimit), 
+		percentage)
+}
+
+// FormatMessageInfo formats message information
+func (b *BaseStrategy) FormatMessageInfo(metrics *model.AggregatedMetrics, params model.LayoutParam) string {
+	percentage := 0.0
+	if metrics.MessageLimit > 0 {
+		percentage = (float64(metrics.TotalMessages) / float64(metrics.MessageLimit)) * 100
+	}
+	return fmt.Sprintf("💬 Messages: %d / %d (%.1f%%)", 
+		metrics.TotalMessages, 
+		metrics.MessageLimit, 
 		percentage)
 }

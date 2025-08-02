@@ -52,14 +52,16 @@ func FormatCurrency(amount float64) string {
 	
 	// Add commas to integer part
 	if len(intPart) > 3 {
-		result := ""
-		for i, c := range intPart {
-			if i > 0 && (len(intPart)-i)%3 == 0 {
-				result += ","
+		// Process from right to left
+		chars := []rune(intPart)
+		result := []rune{}
+		for i := len(chars) - 1; i >= 0; i-- {
+			if len(result) > 0 && len(result)%4 == 3 {
+				result = append([]rune{','}, result...)
 			}
-			result += string(c)
+			result = append([]rune{chars[i]}, result...)
 		}
-		intPart = result
+		intPart = string(result)
 	}
 	
 	// Combine with decimal part

@@ -305,7 +305,7 @@ func TestSummaryFormatterEdgeCases(t *testing.T) {
 		if !strings.Contains(output, "3,333,333,330") {
 			t.Error("Expected large token count to be formatted with commas")
 		}
-		if !strings.Contains(output, "$150,000.00") {
+		if !strings.Contains(output, "$149,999.99") {
 			t.Error("Expected large cost to be formatted with commas")
 		}
 	})

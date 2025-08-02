@@ -18,8 +18,8 @@ func (f *CSVFormatter) Format(data []GroupedData) error {
 	defer w.Flush()
 
 	headers := []string{
-		"Date", "Models", "Input Tokens", "Output Tokens",
-		"Cache Creation", "Cache Read", "Total Tokens", "Cost (USD)",
+		"Date", "Models", "Input", "Output",
+		"Cache Create", "Cache Read", "Total Tokens", "Cost (USD)",
 	}
 	if err := w.Write(headers); err != nil {
 		return err
