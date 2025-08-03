@@ -40,7 +40,15 @@ func (b *BaseStrategy) SeparatorLine() string {
 
 // BoxHeader creates a boxed header with the given title
 func (b *BaseStrategy) BoxHeader(title string, width int) string {
-	padding := width - len(title) - 2
+	if width <= 2 {
+		return strings.Repeat("│", width)
+	}
+	availableWidth := width - 2 // Account for borders
+	if len(title) >= availableWidth {
+		// Truncate title if it's too long
+		return "│" + title[:availableWidth] + "│"
+	}
+	padding := availableWidth - len(title)
 	leftPad := padding / 2
 	rightPad := padding - leftPad
 	return "│" + strings.Repeat(" ", leftPad) + title + strings.Repeat(" ", rightPad) + "│"
@@ -48,6 +56,13 @@ func (b *BaseStrategy) BoxHeader(title string, width int) string {
 
 // CenterText centers text within the given width
 func (b *BaseStrategy) CenterText(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if len(text) >= width {
+		// Truncate text if it's longer than width
+		return text[:width]
+	}
 	padding := width - len(text)
 	leftPad := padding / 2
 	rightPad := padding - leftPad

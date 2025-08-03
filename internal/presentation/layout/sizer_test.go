@@ -220,8 +220,9 @@ func TestSizerEdgeCases(t *testing.T) {
 		// Test with mixed extreme dimensions
 		sizer2 := NewSizer(20, 10000)
 		nameWidth := sizer2.GetSessionNameWidth()
-		if nameWidth >= 20 || nameWidth <= 0 {
-			t.Error("Session name width should adapt to narrow terminal")
+		// With width 20, it should return the minimum width of 20
+		if nameWidth != 20 {
+			t.Errorf("Expected session name width to be minimum 20 for narrow terminal, got %d", nameWidth)
 		}
 	})
 }

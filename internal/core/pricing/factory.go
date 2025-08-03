@@ -2,28 +2,35 @@ package pricing
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/penwyp/go-claude-monitor/internal/util"
 )
 
 // CreatePricingProvider creates a pricing provider based on configuration
 func CreatePricingProvider(cfg *SourceConfig, cacheDir string) (PricingProvider, error) {
+	// Normalize empty source to "default"
+	source := strings.TrimSpace(cfg.PricingSource)
+	if source == "" {
+		source = "default"
+	}
+
 	// Create base provider based on source
 	var baseProvider PricingProvider
 
-	switch cfg.PricingSource {
-	case "default", "":
+	switch source {
+	case "default":
 		baseProvider = NewDefaultProvider()
 	case "litellm":
 		baseProvider = NewLiteLLMProvider()
 	default:
-		return nil, fmt.Errorf("unknown pricing source: %s", cfg.PricingSource)
+		return nil, fmt.Errorf("unknown pricing source: %s", source)
 	}
 
 	// If offline mode or non-default provider, wrap with caching
-	if cfg.PricingOfflineMode || cfg.PricingSource != "default" {
+	if cfg.PricingOfflineMode || source != "default" {
 		util.LogDebug(fmt.Sprintf("Enabling pricing cache: offline_mode=%t, source=%s, cache_file=~/.go-claude-monitor/pricing.json",
-			cfg.PricingOfflineMode, cfg.PricingSource))
+			cfg.PricingOfflineMode, source))
 
 		cacheManager, err := NewCacheManager(cacheDir)
 		if err != nil {

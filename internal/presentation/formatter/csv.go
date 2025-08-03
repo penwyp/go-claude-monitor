@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/penwyp/go-claude-monitor/internal/util"
 )
 
 type CSVFormatter struct{}
@@ -26,9 +28,16 @@ func (f *CSVFormatter) Format(data []GroupedData) error {
 	}
 
 	for _, row := range data {
+		// Simplify model names
+		simplifiedModels := make([]string, len(row.Models))
+		for i, model := range row.Models {
+			simplifiedModels[i] = util.SimplifyModelName(model)
+		}
+		sortedModels := util.SortModels(simplifiedModels)
+		
 		record := []string{
 			row.Date,
-			strings.Join(row.Models, "; "),
+			strings.Join(sortedModels, ", "),
 			fmt.Sprintf("%d", row.InputTokens),
 			fmt.Sprintf("%d", row.OutputTokens),
 			fmt.Sprintf("%d", row.CacheCreation),
@@ -42,9 +51,10 @@ func (f *CSVFormatter) Format(data []GroupedData) error {
 
 		if row.ShowBreakdown {
 			for _, detail := range row.ModelDetails {
+				simplifiedModel := util.SimplifyModelName(detail.Model)
 				record := []string{
-					"  └ " + row.Date,
-					detail.Model,
+					"  └─ " + row.Date,
+					simplifiedModel,
 					fmt.Sprintf("%d", detail.InputTokens),
 					fmt.Sprintf("%d", detail.OutputTokens),
 					fmt.Sprintf("%d", detail.CacheCreation),

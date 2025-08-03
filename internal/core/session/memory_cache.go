@@ -100,9 +100,25 @@ func (mc *MemoryCache) GetRecentDataWithLogs(duration int64) ([]aggregator.Hourl
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 
-	cutoff := time.Now().Unix() - duration
 	var hourlyData []aggregator.HourlyData
 	var rawLogs []model.ConversationLog
+
+	// If duration is 0 or negative, return all data
+	if duration <= 0 {
+		for _, entry := range mc.entries {
+			// Collect all hourly data
+			hourlyData = append(hourlyData, entry.HourlyStats...)
+
+			// Collect all raw logs
+			if entry.RawLogs != nil {
+				rawLogs = append(rawLogs, entry.RawLogs...)
+			}
+		}
+		return hourlyData, rawLogs
+	}
+
+	// Otherwise, apply time filter
+	cutoff := time.Now().Unix() - duration
 
 	for _, entry := range mc.entries {
 		// Collect hourly data
@@ -143,8 +159,20 @@ func (mc *MemoryCache) GetHistoricalLogs(duration int64) []model.ConversationLog
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 
-	cutoff := time.Now().Unix() - duration
 	var rawLogs []model.ConversationLog
+
+	// If duration is 0 or negative, return all logs
+	if duration <= 0 {
+		for _, entry := range mc.entries {
+			if entry.RawLogs != nil {
+				rawLogs = append(rawLogs, entry.RawLogs...)
+			}
+		}
+		return rawLogs
+	}
+
+	// Otherwise, apply time filter
+	cutoff := time.Now().Unix() - duration
 
 	for _, entry := range mc.entries {
 		if entry.RawLogs != nil {

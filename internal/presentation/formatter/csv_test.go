@@ -85,7 +85,7 @@ func TestCSVFormatterFormat(t *testing.T) {
 			wantRows: 2,
 			checkFields: map[int][]string{
 				0: {"2024-01-15", "claude-3-5-sonnet", "1000", "500", "1500"},
-				1: {"2024-01-16", "haiku, opus", "2000", "1000", "3000"},
+				1: {"2024-01-16", "Opus-4, claude-3-5-haiku", "2000", "1000", "3000"},
 			},
 		},
 		{
@@ -119,9 +119,9 @@ func TestCSVFormatterFormat(t *testing.T) {
 			},
 			wantRows: 3, // 1 main row + 2 model detail rows
 			checkFields: map[int][]string{
-				0: {"2024-01-15", "haiku, sonnet", "3000", "1500", "4500"},
-				1: {"└─ sonnet", "2000", "1000", "3000"},
-				2: {"└─ haiku", "1000", "500", "1500"},
+				0: {"2024-01-15", "claude-3-5-sonnet, claude-3-5-haiku", "3000", "1500", "4500"},
+				1: {"└─ 2024-01-15", "claude-3-5-sonnet", "2000", "1000", "3000"},
+				2: {"└─ 2024-01-15", "claude-3-5-haiku", "1000", "500", "1500"},
 			},
 		},
 		{
