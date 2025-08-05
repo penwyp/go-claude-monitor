@@ -68,6 +68,8 @@ make release v0.0.1  # Creates git tag and pushes (triggers GitHub Actions)
     - Real-time tracking: Monitors active sessions, calculates burn rates, and projects costs
     - Deduplication: Handles duplicate entries across multiple log files
     - Caching: Memory-based cache for efficient data processing
+    - Timeline Builder: Constructs unified timelines from various data sources for account-level detection
+    - Window History: Persists and manages historical window information for improved detection accuracy
 
 4. **Data Layer** (`/internal/data`):
     - **Scanner** (`/scanner`): Finds and reads JSONL files concurrently
@@ -107,6 +109,16 @@ The tool uses sophisticated logic to detect 5-hour session windows:
 2. **Time Gaps** (⏳): Detects >5 hour gaps between messages
 3. **First Message** (📍): Uses first message timestamp for initial sessions
 4. **Hour Alignment** (⚪): Fallback - rounds to nearest hour
+
+#### Account-Level Session Detection
+
+The tool now supports account-level session detection, which identifies when multiple projects share the same 5-hour limit window:
+
+- **Global Timeline**: Merges logs from all projects into a unified timeline for accurate cross-project session detection
+- **Multi-Project Sessions**: Sessions spanning multiple projects are marked as "Multiple" and tracked as account-level
+- **Window History**: Account-level windows (especially from limit messages) are preserved and used to improve future detection
+- **Automatic Merging**: Overlapping or adjacent account-level windows are automatically merged
+- **Historical Learning**: The tool learns from past limit messages to accurately identify account-wide rate limits
 
 ## Data Directory Structure
 

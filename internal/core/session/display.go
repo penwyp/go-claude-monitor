@@ -381,6 +381,10 @@ func (td *TerminalDisplay) renderStatusMessage(message string) {
 
 // wrapText wraps text to fit within the specified width
 func wrapText(text string, width int) []string {
+	if text == "" {
+		return []string{}
+	}
+	
 	if len(text) <= width {
 		return []string{text}
 	}

@@ -52,14 +52,10 @@ func (s *FullLayoutStrategy) bottomBorder(maxWidth int) {
 }
 
 func (s *FullLayoutStrategy) predictionsSection(aggregated *model.AggregatedMetrics, param model.LayoutParam, sep string, maxWidth int) {
-	//fmt.Println(sep)
-	//predHeader := "│ PREDICTIONS" + strings.Repeat(" ", maxWidth-14) + "│"
-	//fmt.Println(predHeader)
 	fmt.Println(sep)
 
 	tokensRunOut := aggregated.GetTokensRunOut(param)
 
-	//resetAt := aggregated.FormatResetTime(param)
 	//resetAt = aggregated.AppendWindowIndicator(resetAt)
 
 	// Build prediction columns with dynamic width calculation
@@ -115,9 +111,6 @@ func (s *FullLayoutStrategy) predictionsSection(aggregated *model.AggregatedMetr
 
 func (s *FullLayoutStrategy) modelDistribution(aggregated *model.AggregatedMetrics, sep string, maxWidth int) {
 	if len(aggregated.ModelDistribution) > 0 {
-		//fmt.Println(sep)
-		//modelHeader := "│ MODEL DISTRIBUTION" + strings.Repeat(" ", maxWidth-21) + "│"
-		//fmt.Println(modelHeader)
 		fmt.Println(sep)
 
 		// Sort models by tokens
@@ -176,9 +169,6 @@ func (s *FullLayoutStrategy) modelDistribution(aggregated *model.AggregatedMetri
 }
 
 func (s *FullLayoutStrategy) performanceSection(aggregated *model.AggregatedMetrics, param model.LayoutParam, sep string, maxWidth int, now time.Time) {
-	//fmt.Println(sep)
-	//perfHeader := "│ PERFORMANCE METRICS" + strings.Repeat(" ", maxWidth-22) + "│"
-	//fmt.Println(perfHeader)
 	fmt.Println(sep)
 
 	resetAt := aggregated.FormatResetTime(param)
@@ -239,19 +229,6 @@ func (s *FullLayoutStrategy) performanceSection(aggregated *model.AggregatedMetr
 	fmt.Println(perfLine2)
 }
 
-func (s *FullLayoutStrategy) messageLine(aggregated *model.AggregatedMetrics, messagePercent float64, maxWidth int) {
-	messageBar := CreateProgressBar(messagePercent, 40)
-	messageValues := fmt.Sprintf("%d / %d", aggregated.TotalMessages, aggregated.MessageLimit)
-	messageLine := fmt.Sprintf("│ 📨 Messages %s %s %.1f%%",
-		getPercentageEmoji(messagePercent), messageBar, messagePercent)
-	// Calculate spacing to align values using display width
-	spacing := maxWidth - getDisplayWidth(messageLine) - getDisplayWidth(messageValues) - 3
-	if spacing < 2 {
-		spacing = 2
-	}
-	messageLine = fmt.Sprintf("%s%s%s  │", messageLine, strings.Repeat(" ", spacing), messageValues)
-	fmt.Println(messageLine)
-}
 
 func (s *FullLayoutStrategy) tokenLine(aggregated *model.AggregatedMetrics, tokenPercent float64, maxWidth int) int {
 	tokenBar := CreateProgressBar(tokenPercent, 40)
@@ -283,9 +260,6 @@ func (s *FullLayoutStrategy) costLine(aggregated *model.AggregatedMetrics, costP
 }
 
 func (s *FullLayoutStrategy) resourceUsageData(aggregated *model.AggregatedMetrics, maxWidth int, sep string) (float64, float64, float64) {
-	//resHeader := "│ RESOURCE USAGE" + strings.Repeat(" ", maxWidth-17) + "│"
-	//fmt.Println(resHeader)
-	//fmt.Println(sep)
 
 	// Calculate percentages and progress bars
 	costPercent := aggregated.GetCostPercentage()

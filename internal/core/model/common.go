@@ -7,6 +7,7 @@ const (
 	ModelSonnet35 = "claude-3-5-sonnet"
 	ModelSonnet4  = "claude-sonnet-4-20250514"
 	ModelOpus4    = "claude-opus-4-20250514"
+	ModelOpus41   = "claude-opus-4-1-20250805"
 )
 
 // Message Entry Type

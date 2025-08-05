@@ -638,8 +638,17 @@ func (m *Manager) persistCache() {
 		}
 	}
 
-	// Also save window history
+	// Also save window history with cleanup
 	if m.detector != nil && m.detector.windowHistory != nil {
+		// Clean old windows periodically
+		if removedCount := m.detector.windowHistory.CleanOldWindows(); removedCount > 0 {
+			util.LogInfo(fmt.Sprintf("Cleaned %d old windows from history", removedCount))
+		}
+		
+		// Merge account-level windows
+		m.detector.windowHistory.MergeAccountWindows()
+		
+		// Save the updated history
 		if err := m.detector.windowHistory.Save(); err != nil {
 			util.LogError(fmt.Sprintf("Failed to save window history: %v", err))
 		}

@@ -3,7 +3,6 @@ package session
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/constants"
@@ -395,143 +394,8 @@ func (d *SessionDetector) calculateSessionWindow(timestamp int64) (start, end in
 	return start, end
 }
 
-func (d *SessionDetector) addDataToSession(session *Session, data aggregator.HourlyData) {
-	// Calculate cost
-	cost, err := d.aggregator.CalculateCost(&data)
-	if err != nil {
-		util.LogWarn(fmt.Sprintf("Failed to calculate cost for model %s: %v", data.Model, err))
-		cost = 0
-	}
 
-	// Update account-level totals
-	session.TotalTokens += data.TotalTokens
-	session.TotalCost += cost
-	session.MessageCount += data.MessageCount
-	session.SentMessageCount += data.MessageCount
 
-	// Get or create project stats
-	projectStats, exists := session.Projects[data.ProjectName]
-	if !exists {
-		projectStats = &ProjectStats{
-			ProjectName:       data.ProjectName,
-			TotalTokens:       0,
-			TotalCost:         0,
-			MessageCount:      0,
-			SentMessageCount:  0,
-			ModelDistribution: make(map[string]*model.ModelStats),
-			PerModelStats:     make(map[string]map[string]interface{}),
-			HourlyMetrics:     make([]*model.HourlyMetric, 0),
-			FirstEntryTime:    data.FirstEntryTime,
-			LastEntryTime:     data.LastEntryTime,
-		}
-		session.Projects[data.ProjectName] = projectStats
-	}
-
-	// Update project-specific stats
-	projectStats.TotalTokens += data.TotalTokens
-	projectStats.TotalCost += cost
-	projectStats.MessageCount += data.MessageCount
-	projectStats.SentMessageCount += data.MessageCount
-
-	// Update project's first/last entry times
-	if data.FirstEntryTime < projectStats.FirstEntryTime {
-		projectStats.FirstEntryTime = data.FirstEntryTime
-	}
-	if data.LastEntryTime > projectStats.LastEntryTime {
-		projectStats.LastEntryTime = data.LastEntryTime
-	}
-
-	// Update project's model distribution
-	if stats, ok := projectStats.ModelDistribution[data.Model]; ok {
-		stats.Tokens += data.TotalTokens
-		stats.Cost += cost
-		stats.Count++
-	} else {
-		projectStats.ModelDistribution[data.Model] = &model.ModelStats{
-			Model:  data.Model,
-			Tokens: data.TotalTokens,
-			Cost:   cost,
-			Count:  1,
-		}
-	}
-
-	// Update project's per-model stats
-	if _, ok := projectStats.PerModelStats[data.Model]; !ok {
-		projectStats.PerModelStats[data.Model] = make(map[string]interface{})
-	}
-	projectModelStats := projectStats.PerModelStats[data.Model]
-	projectModelStats["input_tokens"] = getIntValue(projectModelStats["input_tokens"]) + data.InputTokens
-	projectModelStats["output_tokens"] = getIntValue(projectModelStats["output_tokens"]) + data.OutputTokens
-	projectModelStats["cache_creation_tokens"] = getIntValue(projectModelStats["cache_creation_tokens"]) + data.CacheCreation
-	projectModelStats["cache_read_tokens"] = getIntValue(projectModelStats["cache_read_tokens"]) + data.CacheRead
-	projectModelStats["cost_usd"] = getFloatValue(projectModelStats["cost_usd"]) + cost
-	projectModelStats["entries_count"] = getIntValue(projectModelStats["entries_count"]) + 1
-
-	// Add hourly metric to project
-	projectStats.HourlyMetrics = append(projectStats.HourlyMetrics, &model.HourlyMetric{
-		Hour:         time.Unix(data.Hour, 0).UTC(),
-		Tokens:       data.TotalTokens,
-		Cost:         cost,
-		InputTokens:  data.InputTokens,
-		OutputTokens: data.OutputTokens,
-	})
-
-	// Update session-level model distribution
-	if stats, ok := session.ModelDistribution[data.Model]; ok {
-		stats.Tokens += data.TotalTokens
-		stats.Cost += cost
-		stats.Count++
-	} else {
-		session.ModelDistribution[data.Model] = &model.ModelStats{
-			Model:  data.Model,
-			Tokens: data.TotalTokens,
-			Cost:   cost,
-			Count:  1,
-		}
-	}
-
-	// Update session-level per-model stats
-	if _, ok := session.PerModelStats[data.Model]; !ok {
-		session.PerModelStats[data.Model] = make(map[string]interface{})
-	}
-	modelStats := session.PerModelStats[data.Model]
-	modelStats["input_tokens"] = getIntValue(modelStats["input_tokens"]) + data.InputTokens
-	modelStats["output_tokens"] = getIntValue(modelStats["output_tokens"]) + data.OutputTokens
-	modelStats["cache_creation_tokens"] = getIntValue(modelStats["cache_creation_tokens"]) + data.CacheCreation
-	modelStats["cache_read_tokens"] = getIntValue(modelStats["cache_read_tokens"]) + data.CacheRead
-	modelStats["cost_usd"] = getFloatValue(modelStats["cost_usd"]) + cost
-	modelStats["entries_count"] = getIntValue(modelStats["entries_count"]) + 1
-
-	// Add hourly metric to session
-	session.HourlyMetrics = append(session.HourlyMetrics, &model.HourlyMetric{
-		Hour:         time.Unix(data.Hour, 0).UTC(),
-		Tokens:       data.TotalTokens,
-		Cost:         cost,
-		InputTokens:  data.InputTokens,
-		OutputTokens: data.OutputTokens,
-	})
-
-	// Update actual end time
-	if session.ActualEndTime == nil || data.LastEntryTime > *session.ActualEndTime {
-		oldEndTime := "nil"
-		if session.ActualEndTime != nil {
-			oldEndTime = time.Unix(*session.ActualEndTime, 0).Format("2006-01-02 15:04:05")
-		}
-		session.ActualEndTime = &data.LastEntryTime
-		util.LogDebug(fmt.Sprintf("Session %s - Updated ActualEndTime from %s to %s",
-			session.ID,
-			oldEndTime,
-			time.Unix(data.LastEntryTime, 0).Format("2006-01-02 15:04:05")))
-	}
-
-	// Update session's ProjectName field for UI compatibility
-	if session.ProjectName == "" {
-		session.ProjectName = data.ProjectName
-	} else if session.ProjectName != data.ProjectName && !strings.Contains(session.ProjectName, "Multiple") {
-		// Multiple projects in this session
-		session.ProjectName = fmt.Sprintf("Multiple (%d projects)", len(session.Projects))
-	}
-}
 
 func (d *SessionDetector) calculateMetrics(session *Session, nowTimestamp int64) {
 	// For burn rate calculation, prefer using WindowStartTime for detected windows
@@ -692,8 +556,8 @@ func (d *SessionDetector) markActiveSessions(sessions []*Session, nowTimestamp i
 // finalizeSession sets the actual end time and calculates totals
 // This aligns with Python's _finalize_block
 func (d *SessionDetector) finalizeSession(session *Session) {
-	// ActualEndTime is already set in addDataToSession
-	// Update sent_messages_count is already done in addDataToSession
+	// ActualEndTime is already set in addTimelineEntryToSession
+	// Update sent_messages_count is already done in addTimelineEntryToSession
 	
 	// Set the session's ProjectName based on projects
 	if len(session.Projects) == 1 {
@@ -704,6 +568,20 @@ func (d *SessionDetector) finalizeSession(session *Session) {
 	} else if len(session.Projects) > 1 {
 		// Multiple projects
 		session.ProjectName = "Multiple"
+		
+		// Update window history to mark this as account-level
+		if d.windowHistory != nil && session.IsWindowDetected && session.WindowStartTime != nil {
+			record := WindowRecord{
+				StartTime:      *session.WindowStartTime,
+				EndTime:        *session.WindowStartTime + int64(d.sessionDuration.Seconds()),
+				Source:         session.WindowSource,
+				IsLimitReached: session.WindowSource == "limit_message",
+				IsAccountLevel: true, // Multi-project sessions are account-level
+				SessionID:      session.ID,
+				FirstEntryTime: session.FirstEntryTime,
+			}
+			d.windowHistory.AddOrUpdateWindow(record)
+		}
 	}
 }
 
@@ -768,46 +646,6 @@ func truncateToHour(timestamp int64) int64 {
 }
 
 // Helper functions for safe type conversions
-func getIntValue(val interface{}) int {
-	if val == nil {
-		return 0
-	}
-	if intVal, ok := val.(int); ok {
-		return intVal
-	}
-	return 0
-}
-
-func getFloatValue(val interface{}) float64 {
-	if val == nil {
-		return 0.0
-	}
-	if floatVal, ok := val.(float64); ok {
-		return floatVal
-	}
-	return 0.0
-}
-
-// findCachedWindowForTime finds cached window info that covers the given timestamp
-func (d *SessionDetector) findCachedWindowForTime(timestamp int64, cachedWindows map[string]*WindowDetectionInfo) *WindowDetectionInfo {
-	if cachedWindows == nil {
-		return nil
-	}
-
-	// Look for a cached window that would contain this timestamp
-	for _, window := range cachedWindows {
-		if window == nil || window.WindowStartTime == nil {
-			continue
-		}
-
-		windowEnd := *window.WindowStartTime + int64(d.sessionDuration.Seconds())
-		if timestamp >= *window.WindowStartTime && timestamp < windowEnd {
-			return window
-		}
-	}
-
-	return nil
-}
 
 // deduplicateSessions removes duplicate sessions that cover the same time period
 func (d *SessionDetector) deduplicateSessions(sessions []*Session) []*Session {

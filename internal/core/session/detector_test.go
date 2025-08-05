@@ -13,8 +13,8 @@ func TestSlidingWindowDetection(t *testing.T) {
 	agg := aggregator.NewAggregatorWithTimezone("UTC")
 	detector := NewSessionDetectorWithAggregator(agg, "UTC", "/tmp")
 
-	// Test data with specific timestamps
-	baseTime := time.Date(2024, 1, 1, 10, 15, 0, 0, time.UTC).Unix() // 10:15 AM
+	// Test data with specific timestamps (use recent time to avoid age validation issues)
+	baseTime := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour).Add(15 * time.Minute).Unix() // 3 hours ago at :15
 
 	// Create hourly data that starts at 10:15 (not aligned to hour)
 	hourlyData := []aggregator.HourlyData{
@@ -28,10 +28,15 @@ func TestSlidingWindowDetection(t *testing.T) {
 		},
 	}
 
+	// Convert hourly data to global timeline
+	timelineBuilder := NewTimelineBuilder("UTC")
+	entries := timelineBuilder.BuildFromHourlyData(hourlyData)
+	globalTimeline := timelineBuilder.ConvertToTimestampedLogs(entries)
+
 	// Test 1: Without limit detection (should use first message time)
 	input := SessionDetectionInput{
-		HourlyData: hourlyData,
-		RawLogs:    nil,
+		GlobalTimeline:   globalTimeline,
+		CachedWindowInfo: make(map[string]*WindowDetectionInfo),
 	}
 
 	sessions := detector.DetectSessionsWithLimits(input)
@@ -64,7 +69,12 @@ func TestSlidingWindowDetection(t *testing.T) {
 		},
 	}
 
-	input.RawLogs = rawLogs
+	// Add raw logs to timeline
+	rawLogEntries := timelineBuilder.BuildFromRawLogs(rawLogs, "test-project")
+	allEntries := timelineBuilder.MergeTimelines(entries, rawLogEntries)
+	globalTimeline = timelineBuilder.ConvertToTimestampedLogs(allEntries)
+	
+	input.GlobalTimeline = globalTimeline
 	sessions = detector.DetectSessionsWithLimits(input)
 
 	if len(sessions) != 1 {
@@ -89,7 +99,7 @@ func TestGapDetection(t *testing.T) {
 	agg := aggregator.NewAggregatorWithTimezone("UTC")
 	detector := NewSessionDetectorWithAggregator(agg, "UTC", "/tmp")
 
-	baseTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC).Unix()
+	baseTime := time.Now().UTC().Add(-6 * time.Hour).Truncate(time.Hour).Unix()
 
 	// Create data with a 6-hour gap
 	hourlyData := []aggregator.HourlyData{
@@ -111,9 +121,14 @@ func TestGapDetection(t *testing.T) {
 		},
 	}
 
+	// Convert hourly data to global timeline
+	timelineBuilder := NewTimelineBuilder("UTC")
+	entries := timelineBuilder.BuildFromHourlyData(hourlyData)
+	globalTimeline := timelineBuilder.ConvertToTimestampedLogs(entries)
+
 	input := SessionDetectionInput{
-		HourlyData: hourlyData,
-		RawLogs:    nil,
+		GlobalTimeline:   globalTimeline,
+		CachedWindowInfo: make(map[string]*WindowDetectionInfo),
 	}
 
 	sessions := detector.DetectSessionsWithLimits(input)

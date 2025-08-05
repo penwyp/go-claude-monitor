@@ -2,6 +2,7 @@ package session
 
 import (
 	"testing"
+	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
 )
@@ -670,6 +671,11 @@ func TestParseTextContent(t *testing.T) {
 }
 
 func TestDetectWindowFromLimits(t *testing.T) {
+	// Use timestamps from 2 hours ago to ensure they're recent enough
+	now := time.Now()
+	recentTimestamp := now.Add(-2 * time.Hour).Unix()
+	recentResetTime := recentTimestamp + (5 * 60 * 60) // 5 hours after timestamp
+	
 	tests := []struct {
 		name                string
 		limits              []LimitInfo
@@ -688,43 +694,43 @@ func TestDetectWindowFromLimits(t *testing.T) {
 			limits: []LimitInfo{
 				{
 					Type:      "opus_limit",
-					Timestamp: 1704106800, // 2024-01-01 11:00:00
-					ResetTime: int64Ptr(1704124800), // 2024-01-01 16:00:00 (5 hours later)
+					Timestamp: recentTimestamp,
+					ResetTime: int64Ptr(recentResetTime),
 				},
 			},
 			expectWindowStart:   true,
 			expectedSource:      "limit_message",
-			expectedWindowStart: 1704106800, // Window starts 5 hours before reset (11:00:00)
+			expectedWindowStart: recentTimestamp, // Window starts 5 hours before reset
 		},
 		{
 			name: "multiple_limits_picks_most_recent_with_reset",
 			limits: []LimitInfo{
 				{
 					Type:      "system_limit",
-					Timestamp: 1704106800, // Earlier
-					ResetTime: int64Ptr(1704124800),
+					Timestamp: recentTimestamp - 3600, // 1 hour earlier
+					ResetTime: int64Ptr(recentResetTime - 3600),
 				},
 				{
 					Type:      "opus_limit",
-					Timestamp: 1704110400, // More recent
-					ResetTime: int64Ptr(1704128400),
+					Timestamp: recentTimestamp, // More recent
+					ResetTime: int64Ptr(recentResetTime),
 				},
 			},
 			expectWindowStart:   true,
 			expectedSource:      "limit_message",
-			expectedWindowStart: 1704110400, // Based on more recent limit
+			expectedWindowStart: recentTimestamp, // Based on more recent limit
 		},
 		{
 			name: "limits_without_reset_time",
 			limits: []LimitInfo{
 				{
 					Type:      "system_limit",
-					Timestamp: 1704106800,
+					Timestamp: recentTimestamp,
 					ResetTime: nil,
 				},
 				{
 					Type:      "general_limit",
-					Timestamp: 1704110400,
+					Timestamp: recentTimestamp + 3600,
 					ResetTime: nil,
 				},
 			},
@@ -736,18 +742,18 @@ func TestDetectWindowFromLimits(t *testing.T) {
 			limits: []LimitInfo{
 				{
 					Type:      "system_limit",
-					Timestamp: 1704110400,
+					Timestamp: recentTimestamp + 3600,
 					ResetTime: nil, // No reset time
 				},
 				{
 					Type:      "opus_limit",
-					Timestamp: 1704106800,
-					ResetTime: int64Ptr(1704124800), // Has reset time
+					Timestamp: recentTimestamp,
+					ResetTime: int64Ptr(recentResetTime), // Has reset time
 				},
 			},
 			expectWindowStart:   true,
 			expectedSource:      "limit_message",
-			expectedWindowStart: 1704106800, // Based on limit with reset time
+			expectedWindowStart: recentTimestamp, // Based on limit with reset time
 		},
 	}
 

@@ -40,6 +40,7 @@ type WindowRecord struct {
 	IsLimitReached bool   `json:"is_limit_reached"`           // true if from limit message
 	LimitMessage   string `json:"limit_message,omitempty"`    // Original limit message text (e.g., "Claude AI usage limit reached|1751997600")
 	FirstEntryTime int64  `json:"first_entry_time,omitempty"` // Stable first message time for burn rate calculation
+	IsAccountLevel bool   `json:"is_account_level,omitempty"` // true if this is an account-level window (across all projects)
 
 	StartTimeStr string `json:"start_time_str"`
 	EndTimeStr   string `json:"end_time_str"`
@@ -338,6 +339,37 @@ func (m *WindowHistoryManager) GetLimitReachedWindows() []WindowRecord {
 	return limitReached
 }
 
+// GetAccountLevelWindows returns all account-level windows (across all projects)
+func (m *WindowHistoryManager) GetAccountLevelWindows() []WindowRecord {
+	m.history.mu.RLock()
+	defer m.history.mu.RUnlock()
+
+	var accountLevel []WindowRecord
+	for _, record := range m.history.Windows {
+		if record.IsAccountLevel {
+			accountLevel = append(accountLevel, record)
+		}
+	}
+	return accountLevel
+}
+
+// GetRecentAccountWindows returns account-level windows from the specified duration
+func (m *WindowHistoryManager) GetRecentAccountWindows(duration time.Duration) []WindowRecord {
+	m.history.mu.RLock()
+	defer m.history.mu.RUnlock()
+
+	cutoff := time.Now().Unix() - int64(duration.Seconds())
+	var recent []WindowRecord
+	
+	for _, record := range m.history.Windows {
+		if record.IsAccountLevel && record.EndTime > cutoff {
+			recent = append(recent, record)
+		}
+	}
+	
+	return recent
+}
+
 // UpdateFromLimitMessage updates window history based on a limit message
 func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTime int64, limitMessage string) {
 	// Calculate window boundaries from reset time
@@ -349,6 +381,7 @@ func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTi
 		EndTime:        windowEnd,
 		Source:         "limit_message",
 		IsLimitReached: true,
+		IsAccountLevel: true, // Limit messages apply to the entire account
 		LimitMessage:   limitMessage,
 		SessionID:      fmt.Sprintf("%d", windowStart),
 		CreatedAt:      time.Now().Unix(),
@@ -359,7 +392,7 @@ func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTi
 
 	m.AddOrUpdateWindow(record)
 
-	util.LogInfo(fmt.Sprintf("Updated window history from limit message: %s to %s (message: %s)",
+	util.LogInfo(fmt.Sprintf("Updated window history from limit message: %s to %s (account-level, message: %s)",
 		time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
 		time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05"),
 		limitMessage))
@@ -419,6 +452,7 @@ func (m *WindowHistoryManager) LoadHistoricalLimitWindows(logs []model.Conversat
 				EndTime:        windowEnd,
 				Source:         "limit_message",
 				IsLimitReached: true,
+				IsAccountLevel: true, // Historical limit messages are account-level
 				LimitMessage:   limit.Content,
 				SessionID:      fmt.Sprintf("%d", windowStart),
 				CreatedAt:      limit.Timestamp, // Use the limit message timestamp
@@ -430,7 +464,7 @@ func (m *WindowHistoryManager) LoadHistoricalLimitWindows(logs []model.Conversat
 			m.AddOrUpdateWindow(record)
 			addedCount++
 
-			util.LogInfo(fmt.Sprintf("Added historical limit window: %s to %s (from message: %s)",
+			util.LogInfo(fmt.Sprintf("Added historical limit window: %s to %s (account-level, from message: %s)",
 				time.Unix(windowStart, 0).Format("2006-01-02 15:04:05"),
 				time.Unix(windowEnd, 0).Format("2006-01-02 15:04:05"),
 				limit.Content))
@@ -445,4 +479,102 @@ func (m *WindowHistoryManager) LoadHistoricalLimitWindows(logs []model.Conversat
 	}
 
 	return addedCount
+}
+
+// MergeAccountWindows merges overlapping or adjacent windows that belong to the same account
+// This is useful when multiple projects share the same 5-hour limit window
+func (m *WindowHistoryManager) MergeAccountWindows() {
+	m.history.mu.Lock()
+	defer m.history.mu.Unlock()
+
+	if len(m.history.Windows) < 2 {
+		return
+	}
+
+	// Sort windows by start time
+	sort.Slice(m.history.Windows, func(i, j int) bool {
+		return m.history.Windows[i].StartTime < m.history.Windows[j].StartTime
+	})
+
+	// Merge overlapping or adjacent account-level windows
+	var merged []WindowRecord
+	current := m.history.Windows[0]
+
+	for i := 1; i < len(m.history.Windows); i++ {
+		next := m.history.Windows[i]
+
+		// Check if both windows are account-level and can be merged
+		if current.IsAccountLevel && next.IsAccountLevel &&
+			current.EndTime >= next.StartTime { // Overlapping or adjacent
+			
+			// Merge windows
+			if next.EndTime > current.EndTime {
+				current.EndTime = next.EndTime
+			}
+			
+			// Preserve limit reached status
+			if next.IsLimitReached {
+				current.IsLimitReached = true
+				if next.LimitMessage != "" {
+					current.LimitMessage = next.LimitMessage
+				}
+			}
+			
+			// Update source to indicate merged window
+			if current.Source != next.Source {
+				current.Source = "merged"
+			}
+			
+			util.LogDebug(fmt.Sprintf("Merged account windows: %s-%s with %s-%s",
+				time.Unix(current.StartTime, 0).Format("15:04"),
+				time.Unix(current.EndTime, 0).Format("15:04"),
+				time.Unix(next.StartTime, 0).Format("15:04"),
+				time.Unix(next.EndTime, 0).Format("15:04")))
+		} else {
+			// Can't merge, save current and move to next
+			current.populateStringFields()
+			merged = append(merged, current)
+			current = next
+		}
+	}
+
+	// Don't forget the last window
+	current.populateStringFields()
+	merged = append(merged, current)
+
+	m.history.Windows = merged
+	util.LogInfo(fmt.Sprintf("Window merge complete: %d windows after merge", len(merged)))
+}
+
+// CleanOldWindows removes windows older than the retention period
+func (m *WindowHistoryManager) CleanOldWindows() int {
+	m.history.mu.Lock()
+	defer m.history.mu.Unlock()
+
+	currentTime := time.Now().Unix()
+	minRetentionTime := currentTime - constants.LimitWindowRetentionSeconds
+	
+	var kept []WindowRecord
+	removedCount := 0
+
+	for _, record := range m.history.Windows {
+		// Keep recent windows and all limit-reached windows within retention
+		if record.EndTime > minRetentionTime {
+			kept = append(kept, record)
+		} else {
+			removedCount++
+			util.LogDebug(fmt.Sprintf("Removing old window: %s-%s (source: %s)",
+				time.Unix(record.StartTime, 0).Format("2006-01-02 15:04"),
+				time.Unix(record.EndTime, 0).Format("2006-01-02 15:04"),
+				record.Source))
+		}
+	}
+
+	m.history.Windows = kept
+	
+	if removedCount > 0 {
+		util.LogInfo(fmt.Sprintf("Cleaned %d old windows, %d windows remaining", removedCount, len(kept)))
+	}
+
+	return removedCount
 }

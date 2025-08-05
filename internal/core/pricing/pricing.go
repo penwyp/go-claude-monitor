@@ -55,6 +55,12 @@ var modelPricingMap = map[string]ModelPricing{
 		CacheCreation: 18.75, // $18.75 per million tokens
 		CacheRead:     1.50,  // $1.5 per million tokens
 	},
+	model.ModelOpus41: {
+		Input:         15.00, // $15 per million tokens
+		Output:        75.00, // $75 per million tokens
+		CacheCreation: 18.75, // $18.75 per million tokens
+		CacheRead:     1.50,  // $1.5 per million tokens
+	},
 }
 
 // planMap stores all available subscription plans

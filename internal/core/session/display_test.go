@@ -537,7 +537,7 @@ func TestWrapText(t *testing.T) {
 			name:     "needs_wrapping",
 			text:     "This is a longer text that needs to be wrapped",
 			width:    20,
-			expected: []string{"This is a longer", "text that needs to be", "wrapped"},
+			expected: []string{"This is a longer", "text that needs to", "be wrapped"},
 		},
 		{
 			name:     "single_long_word",

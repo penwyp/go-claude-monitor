@@ -10,7 +10,6 @@ import (
 
 type TableFormatter struct {
 	headers []string
-	widths  []int
 }
 
 func NewTableFormatter() *TableFormatter {
