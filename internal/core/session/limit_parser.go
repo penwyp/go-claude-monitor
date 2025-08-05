@@ -307,6 +307,16 @@ func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *i
 	// Calculate window start from reset time
 	// Window starts 5 hours before reset
 	windowStartTime := *bestLimit.ResetTime - (5 * 60 * 60)
+	
+	// Validate that this window is recent enough to be relevant
+	currentTime := time.Now().Unix()
+	maxAge := int64(7 * 24 * 3600) // 7 days
+	if currentTime - windowStartTime > maxAge {
+		util.LogWarn(fmt.Sprintf("Detected window is too old to use: %s (from limit: %s)",
+			time.Unix(windowStartTime, 0).Format("2006-01-02 15:04:05"),
+			bestLimit.Content))
+		return nil, ""
+	}
 
 	util.LogInfo(fmt.Sprintf("Detected window from limit message: start=%s, reset=%s, type=%s",
 		time.Unix(windowStartTime, 0).Format("2006-01-02 15:04:05"),

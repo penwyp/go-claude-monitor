@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/constants"
@@ -92,10 +93,10 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 		util.LogInfo("No raw logs provided for limit detection")
 	}
 
-	// Python's approach: create sessions based on actual data, not fixed blocks
-	// This matches Python's transform_to_blocks logic
-	var sessions []*Session
-	var currentSession *Session
+	// New approach: create account-level sessions based on time windows
+	// Group HourlyData by time windows first, then aggregate by project within each window
+	sessionMap := make(map[string]*Session) // Key: session ID (window start time)
+	windowToDataMap := make(map[string][]aggregator.HourlyData) // Group data by window
 
 	// Sort data by hour (timestamp) to process chronologically
 	sortedData := make([]aggregator.HourlyData, len(input.HourlyData))
@@ -104,37 +105,45 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 		return sortedData[i].Hour < sortedData[j].Hour
 	})
 
+	// First pass: determine time windows and group data
 	for _, item := range sortedData {
-		// Check if we need a new session
-		needNewSession := false
-
-		if currentSession == nil {
-			needNewSession = true
-		} else {
-			// Check if this item's hour is beyond current session's end time
-			if item.Hour >= currentSession.EndTime {
-				needNewSession = true
+		// Find or create the window for this data
+		var sessionID string
+		
+		// Try to find existing window that contains this hour
+		found := false
+		for id, session := range sessionMap {
+			if item.Hour >= session.StartTime && item.Hour < session.EndTime {
+				sessionID = id
+				found = true
+				break
 			}
 		}
-
-		if needNewSession {
-			// Finalize previous session if exists
-			if currentSession != nil {
-				d.finalizeSession(currentSession)
-				d.calculateMetrics(currentSession, nowTimestamp)
-				sessions = append(sessions, currentSession)
-			}
-
-			// Check for gap before creating new session
-			if currentSession != nil && currentSession.ActualEndTime != nil {
-				gapDuration := item.Hour - *currentSession.ActualEndTime
-				if gapDuration >= int64(d.sessionDuration.Seconds()) {
-					// This is a significant gap - potential new window
-					windowStartFromGap := item.FirstEntryTime
-					if windowStartFromGap > 0 && (windowStartFromLimit == nil || windowStartFromGap > *windowStartFromLimit) {
-						windowStartFromLimit = &windowStartFromGap
-						windowSource = "gap"
-						util.LogDebug(fmt.Sprintf("Detected window from gap: start=%d", windowStartFromGap))
+		
+		if !found {
+			// Need to create a new window
+			// Check for gap detection
+			if len(sessionMap) > 0 {
+				// Find the most recent session
+				var lastSession *Session
+				var lastEndTime int64
+				for _, s := range sessionMap {
+					if s.ActualEndTime != nil && *s.ActualEndTime > lastEndTime {
+						lastSession = s
+						lastEndTime = *s.ActualEndTime
+					}
+				}
+				
+				if lastSession != nil && lastSession.ActualEndTime != nil {
+					gapDuration := item.Hour - *lastSession.ActualEndTime
+					if gapDuration >= int64(d.sessionDuration.Seconds()) {
+						// This is a significant gap - potential new window
+						windowStartFromGap := item.FirstEntryTime
+						if windowStartFromGap > 0 && (windowStartFromLimit == nil || windowStartFromGap > *windowStartFromLimit) {
+							windowStartFromLimit = &windowStartFromGap
+							windowSource = "gap"
+							util.LogDebug(fmt.Sprintf("Detected window from gap: start=%d", windowStartFromGap))
+						}
 					}
 				}
 			}
@@ -153,23 +162,18 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 						time.Unix(*cachedWindow.WindowStartTime, 0).Format("2006-01-02 15:04:05"),
 						cachedWindow.WindowSource))
 				}
-				// Use cached FirstEntryTime if available to ensure stable burn rate calculations
-				if cachedWindow.FirstEntryTime > 0 && cachedWindow.FirstEntryTime < item.FirstEntryTime {
-					util.LogInfo(fmt.Sprintf("Using cached FirstEntryTime: %s instead of %s for stable burn rate",
-						time.Unix(cachedWindow.FirstEntryTime, 0).Format("2006-01-02 15:04:05"),
-						time.Unix(item.FirstEntryTime, 0).Format("2006-01-02 15:04:05")))
-					item.FirstEntryTime = cachedWindow.FirstEntryTime
-				}
 			}
 
 			// Create new session with sliding window support
-			currentSession = d.createNewSessionWithWindow(item, windowStartFromLimit, windowSource)
+			newSession := d.createNewSessionWithWindow(item, windowStartFromLimit, windowSource)
+			sessionID = newSession.ID
+			sessionMap[sessionID] = newSession
 
 			// Add limit messages to session if any
 			if len(limits) > 0 {
 				for _, limit := range limits {
-					if limit.Timestamp >= currentSession.StartTime && limit.Timestamp <= currentSession.EndTime {
-						currentSession.LimitMessages = append(currentSession.LimitMessages, map[string]interface{}{
+					if limit.Timestamp >= newSession.StartTime && limit.Timestamp <= newSession.EndTime {
+						newSession.LimitMessages = append(newSession.LimitMessages, map[string]interface{}{
 							"type":      limit.Type,
 							"timestamp": limit.Timestamp,
 							"resetTime": limit.ResetTime,
@@ -180,17 +184,28 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 				}
 			}
 		}
-
-		// Add data to current session
-		d.addDataToSession(currentSession, item)
+		
+		// Group data by session window
+		windowToDataMap[sessionID] = append(windowToDataMap[sessionID], item)
 	}
 
-	// Don't forget the last session
-	if currentSession != nil {
-		d.finalizeSession(currentSession)
-		d.calculateMetrics(currentSession, nowTimestamp)
-		sessions = append(sessions, currentSession)
+	// Second pass: aggregate data for each session
+	for sessionID, dataItems := range windowToDataMap {
+		session := sessionMap[sessionID]
+		for _, item := range dataItems {
+			d.addDataToSession(session, item)
+		}
+		d.finalizeSession(session)
+		d.calculateMetrics(session, nowTimestamp)
 	}
+
+	// Convert map to slice
+	var sessions []*Session
+	for _, session := range sessionMap {
+		sessions = append(sessions, session)
+	}
+
+	// Sessions are already finalized in the loop above
 
 	// Detect gaps and insert gap sessions (matches Python's logic)
 	sessions = d.insertGapSessions(sessions)
@@ -234,7 +249,8 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 	var windowSource string
 
 	// Debug log input parameters
-	util.LogDebug(fmt.Sprintf("createNewSessionWithWindow called - FirstData.Hour: %s, FirstEntryTime: %s, DetectedWindowStart: %v, Source: %s",
+	util.LogDebug(fmt.Sprintf("createNewSessionWithWindow called - Project: %s, FirstData.Hour: %s, FirstEntryTime: %s, DetectedWindowStart: %v, Source: %s",
+		firstData.ProjectName,
 		time.Unix(firstData.Hour, 0).Format("2006-01-02 15:04:05"),
 		time.Unix(firstData.FirstEntryTime, 0).Format("2006-01-02 15:04:05"),
 		detectedWindowStart,
@@ -284,8 +300,8 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 
 	// Validate window against history
 	if d.windowHistory != nil {
-		validStart, validEnd, wasAdjusted := d.windowHistory.ValidateNewWindow(windowStart, windowEnd)
-		if !wasAdjusted {
+		validStart, validEnd, isValid := d.windowHistory.ValidateNewWindow(windowStart, windowEnd)
+		if !isValid {
 			// Window was adjusted by history
 			currentTime := time.Now().Unix()
 			maxAllowedEnd := currentTime + constants.MaxFutureWindowSeconds
@@ -341,7 +357,8 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 		EndTime:           windowEnd,
 		IsActive:          false,
 		IsGap:             false,
-		ProjectName:       firstData.ProjectName,
+		ProjectName:       "", // Will be set later based on projects in session
+		Projects:          make(map[string]*ProjectStats),
 		ModelDistribution: make(map[string]*model.ModelStats),
 		PerModelStats:     make(map[string]map[string]interface{}),
 		HourlyMetrics:     make([]*model.HourlyMetric, 0),
@@ -375,26 +392,94 @@ func (d *SessionDetector) addDataToSession(session *Session, data aggregator.Hou
 		cost = 0
 	}
 
+	// Update account-level totals
 	session.TotalTokens += data.TotalTokens
 	session.TotalCost += cost
 	session.MessageCount += data.MessageCount
 	session.SentMessageCount += data.MessageCount
 
-	// Update model distribution
+	// Get or create project stats
+	projectStats, exists := session.Projects[data.ProjectName]
+	if !exists {
+		projectStats = &ProjectStats{
+			ProjectName:       data.ProjectName,
+			TotalTokens:       0,
+			TotalCost:         0,
+			MessageCount:      0,
+			SentMessageCount:  0,
+			ModelDistribution: make(map[string]*model.ModelStats),
+			PerModelStats:     make(map[string]map[string]interface{}),
+			HourlyMetrics:     make([]*model.HourlyMetric, 0),
+			FirstEntryTime:    data.FirstEntryTime,
+			LastEntryTime:     data.LastEntryTime,
+		}
+		session.Projects[data.ProjectName] = projectStats
+	}
+
+	// Update project-specific stats
+	projectStats.TotalTokens += data.TotalTokens
+	projectStats.TotalCost += cost
+	projectStats.MessageCount += data.MessageCount
+	projectStats.SentMessageCount += data.MessageCount
+
+	// Update project's first/last entry times
+	if data.FirstEntryTime < projectStats.FirstEntryTime {
+		projectStats.FirstEntryTime = data.FirstEntryTime
+	}
+	if data.LastEntryTime > projectStats.LastEntryTime {
+		projectStats.LastEntryTime = data.LastEntryTime
+	}
+
+	// Update project's model distribution
+	if stats, ok := projectStats.ModelDistribution[data.Model]; ok {
+		stats.Tokens += data.TotalTokens
+		stats.Cost += cost
+		stats.Count++
+	} else {
+		projectStats.ModelDistribution[data.Model] = &model.ModelStats{
+			Model:  data.Model,
+			Tokens: data.TotalTokens,
+			Cost:   cost,
+			Count:  1,
+		}
+	}
+
+	// Update project's per-model stats
+	if _, ok := projectStats.PerModelStats[data.Model]; !ok {
+		projectStats.PerModelStats[data.Model] = make(map[string]interface{})
+	}
+	projectModelStats := projectStats.PerModelStats[data.Model]
+	projectModelStats["input_tokens"] = getIntValue(projectModelStats["input_tokens"]) + data.InputTokens
+	projectModelStats["output_tokens"] = getIntValue(projectModelStats["output_tokens"]) + data.OutputTokens
+	projectModelStats["cache_creation_tokens"] = getIntValue(projectModelStats["cache_creation_tokens"]) + data.CacheCreation
+	projectModelStats["cache_read_tokens"] = getIntValue(projectModelStats["cache_read_tokens"]) + data.CacheRead
+	projectModelStats["cost_usd"] = getFloatValue(projectModelStats["cost_usd"]) + cost
+	projectModelStats["entries_count"] = getIntValue(projectModelStats["entries_count"]) + 1
+
+	// Add hourly metric to project
+	projectStats.HourlyMetrics = append(projectStats.HourlyMetrics, &model.HourlyMetric{
+		Hour:         time.Unix(data.Hour, 0).UTC(),
+		Tokens:       data.TotalTokens,
+		Cost:         cost,
+		InputTokens:  data.InputTokens,
+		OutputTokens: data.OutputTokens,
+	})
+
+	// Update session-level model distribution
 	if stats, ok := session.ModelDistribution[data.Model]; ok {
 		stats.Tokens += data.TotalTokens
-		stats.Cost += cost // Use real-time calculated cost
+		stats.Cost += cost
 		stats.Count++
 	} else {
 		session.ModelDistribution[data.Model] = &model.ModelStats{
 			Model:  data.Model,
 			Tokens: data.TotalTokens,
-			Cost:   cost, // Use real-time calculated cost
+			Cost:   cost,
 			Count:  1,
 		}
 	}
 
-	// Update per-model stats (matching Python structure)
+	// Update session-level per-model stats
 	if _, ok := session.PerModelStats[data.Model]; !ok {
 		session.PerModelStats[data.Model] = make(map[string]interface{})
 	}
@@ -406,7 +491,7 @@ func (d *SessionDetector) addDataToSession(session *Session, data aggregator.Hou
 	modelStats["cost_usd"] = getFloatValue(modelStats["cost_usd"]) + cost
 	modelStats["entries_count"] = getIntValue(modelStats["entries_count"]) + 1
 
-	// Add hourly metric (convert timestamp back to time.Time for compatibility)
+	// Add hourly metric to session
 	session.HourlyMetrics = append(session.HourlyMetrics, &model.HourlyMetric{
 		Hour:         time.Unix(data.Hour, 0).UTC(),
 		Tokens:       data.TotalTokens,
@@ -426,6 +511,14 @@ func (d *SessionDetector) addDataToSession(session *Session, data aggregator.Hou
 			session.ID,
 			oldEndTime,
 			time.Unix(data.LastEntryTime, 0).Format("2006-01-02 15:04:05")))
+	}
+
+	// Update session's ProjectName field for UI compatibility
+	if session.ProjectName == "" {
+		session.ProjectName = data.ProjectName
+	} else if session.ProjectName != data.ProjectName && !strings.Contains(session.ProjectName, "Multiple") {
+		// Multiple projects in this session
+		session.ProjectName = fmt.Sprintf("Multiple (%d projects)", len(session.Projects))
 	}
 }
 
@@ -621,7 +714,8 @@ func (d *SessionDetector) insertGapSessions(sessions []*Session) []*Session {
 					ActualEndTime:     nil,
 					IsGap:             true,
 					IsActive:          false,
-					ProjectName:       prevSession.ProjectName,
+					ProjectName:       "Gap", // Generic name for gap sessions
+					Projects:          make(map[string]*ProjectStats), // Empty projects map
 					TotalTokens:       0,
 					TotalCost:         0,
 					MessageCount:      0,
@@ -706,31 +800,71 @@ func (d *SessionDetector) deduplicateSessions(sessions []*Session) []*Session {
 		return sessions[i].StartTime < sessions[j].StartTime
 	})
 
-	// Keep track of unique sessions
+	// Keep track of unique sessions by time window (account-level)
 	uniqueSessions := make([]*Session, 0, len(sessions))
 	sessionMap := make(map[string]*Session)
 
 	for _, session := range sessions {
-		key := fmt.Sprintf("%s-%d-%d", session.ProjectName, session.StartTime, session.EndTime)
+		// Key is now just based on time window, not project
+		key := fmt.Sprintf("%d-%d", session.StartTime, session.EndTime)
 		
 		if existing, exists := sessionMap[key]; exists {
 			// Merge data from duplicate session
 			util.LogInfo(fmt.Sprintf("Found duplicate session: ID=%s and ID=%s (key=%s)", existing.ID, session.ID, key))
 			
-			// Keep the session with more data or better window detection
-			if session.TotalTokens > existing.TotalTokens || 
-			   (session.IsWindowDetected && !existing.IsWindowDetected) ||
-			   (session.WindowSource == "limit_message" && existing.WindowSource != "limit_message") {
-				// Replace with the better session
-				for i, s := range uniqueSessions {
-					if s.ID == existing.ID {
-						uniqueSessions[i] = session
-						break
+			// Merge projects from duplicate session into existing
+			for projectName, projectStats := range session.Projects {
+				if existingProject, exists := existing.Projects[projectName]; exists {
+					// Merge project data
+					existingProject.TotalTokens += projectStats.TotalTokens
+					existingProject.TotalCost += projectStats.TotalCost
+					existingProject.MessageCount += projectStats.MessageCount
+					existingProject.SentMessageCount += projectStats.SentMessageCount
+					
+					// Update time bounds
+					if projectStats.FirstEntryTime < existingProject.FirstEntryTime {
+						existingProject.FirstEntryTime = projectStats.FirstEntryTime
 					}
+					if projectStats.LastEntryTime > existingProject.LastEntryTime {
+						existingProject.LastEntryTime = projectStats.LastEntryTime
+					}
+					
+					// Merge model distributions
+					for model, stats := range projectStats.ModelDistribution {
+						if existingStats, ok := existingProject.ModelDistribution[model]; ok {
+							existingStats.Tokens += stats.Tokens
+							existingStats.Cost += stats.Cost
+							existingStats.Count += stats.Count
+						} else {
+							existingProject.ModelDistribution[model] = stats
+						}
+					}
+				} else {
+					// Add new project
+					existing.Projects[projectName] = projectStats
 				}
-				sessionMap[key] = session
-				util.LogInfo(fmt.Sprintf("Replaced session %s with %s (better data/detection)", existing.ID, session.ID))
 			}
+			
+			// Update session totals
+			existing.TotalTokens += session.TotalTokens
+			existing.TotalCost += session.TotalCost
+			existing.MessageCount += session.MessageCount
+			existing.SentMessageCount += session.SentMessageCount
+			
+			// Keep the better window detection
+			if session.IsWindowDetected && !existing.IsWindowDetected ||
+			   (session.WindowSource == "limit_message" && existing.WindowSource != "limit_message") {
+				existing.WindowStartTime = session.WindowStartTime
+				existing.IsWindowDetected = session.IsWindowDetected
+				existing.WindowSource = session.WindowSource
+			}
+			
+			// Update ProjectName for UI
+			if len(existing.Projects) > 1 {
+				existing.ProjectName = fmt.Sprintf("Multiple (%d projects)", len(existing.Projects))
+			}
+			
+			util.LogInfo(fmt.Sprintf("Merged session %s into %s", session.ID, existing.ID))
 		} else {
 			// New unique session
 			uniqueSessions = append(uniqueSessions, session)

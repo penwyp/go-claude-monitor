@@ -5,7 +5,21 @@ import (
 	"time"
 )
 
-// Session represents an active Claude usage session
+// ProjectStats holds statistics for a single project within a session
+type ProjectStats struct {
+	ProjectName       string
+	TotalTokens       int
+	TotalCost         float64
+	MessageCount      int
+	SentMessageCount  int
+	ModelDistribution map[string]*model.ModelStats
+	PerModelStats     map[string]map[string]interface{}
+	HourlyMetrics     []*model.HourlyMetric
+	FirstEntryTime    int64 // First message time for this project in the session
+	LastEntryTime     int64 // Last message time for this project in the session
+}
+
+// Session represents an active Claude usage session (account-level)
 type Session struct {
 	ID               string
 	StartTime        int64  // Unix timestamp
@@ -14,8 +28,11 @@ type Session struct {
 	ActualEndTime    *int64 // Unix timestamp of last entry
 	IsActive         bool
 	IsGap            bool // Indicates if this is a gap session
-	ProjectName      string
+	ProjectName      string // Deprecated: kept for UI compatibility, will contain primary project or "Multiple"
 	SentMessageCount int // Number of messages sent in this session
+
+	// Multi-project support
+	Projects         map[string]*ProjectStats // Key: project name
 
 	// Sliding window support
 	WindowStartTime  *int64 // Actual window start time (not rounded to hour)
@@ -23,7 +40,7 @@ type Session struct {
 	WindowSource     string // Source of window detection: "limit_message", "gap", "first_message", "rounded_hour"
 	FirstEntryTime   int64  // Timestamp of the first message in this session
 
-	// Statistics
+	// Statistics (account-level totals)
 	TotalTokens       int
 	TotalCost         float64
 	MessageCount      int
