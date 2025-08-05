@@ -34,6 +34,15 @@ type HourlyData struct {
 	LastEntryTime  int64  `json:"lastEntryTime"`  // Unix timestamp of last entry in this hour
 }
 
+// CachedLimitInfo contains essential limit message information for caching
+type CachedLimitInfo struct {
+	Type      string `json:"type"`      // "opus_limit", "general_limit", "system_limit"
+	Timestamp int64  `json:"timestamp"` // Unix timestamp when limit was detected
+	ResetTime *int64 `json:"resetTime"` // Unix timestamp when limit will reset
+	Content   string `json:"content"`   // Original limit message content
+	Model     string `json:"model"`     // Model that hit the limit
+}
+
 // AggregatedData represents the aggregation result for a file.
 type AggregatedData struct {
 	FileHash           string       `json:"fileHash"`
@@ -45,6 +54,7 @@ type AggregatedData struct {
 	FileSize           int64        `json:"fileSize"`
 	Inode              uint64       `json:"inode"`                         // File inode
 	ContentFingerprint string       `json:"content_fingerprint,omitempty"` // Content fingerprint for change detection
+	LimitMessages      []CachedLimitInfo  `json:"limitMessages,omitempty"`       // Detected limit messages for window detection
 }
 
 // NewAggregatorWithTimezone creates a new Aggregator with a specified timezone.

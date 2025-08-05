@@ -323,14 +323,29 @@ func (m *Manager) parseAndCacheFiles(files []string, sessionIdMap map[string]str
 		projectName := aggregator.ExtractProjectName(result.File)
 		hourlyData := m.aggregator.AggregateByHourAndModel(recentLogs, projectName)
 
+		// Extract limit messages
+		limitParser := NewLimitParser()
+		limitInfos := limitParser.ParseLogs(recentLogs)
+		cachedLimits := make([]aggregator.CachedLimitInfo, 0, len(limitInfos))
+		for _, limit := range limitInfos {
+			cachedLimits = append(cachedLimits, aggregator.CachedLimitInfo{
+				Type:      limit.Type,
+				Timestamp: limit.Timestamp,
+				ResetTime: limit.ResetTime,
+				Content:   limit.Content,
+				Model:     limit.Model,
+			})
+		}
+
 		// Create aggregated data
 		sessionId := sessionIdMap[result.File]
 		aggregatedData := &aggregator.AggregatedData{
-			FileHash:    sessionId, // Using sessionId for now, will rename field later
-			FilePath:    result.File,
-			ProjectName: projectName,
-			HourlyStats: hourlyData,
-			SessionId:   sessionId,
+			FileHash:      sessionId, // Using sessionId for now, will rename field later
+			FilePath:      result.File,
+			ProjectName:   projectName,
+			HourlyStats:   hourlyData,
+			SessionId:     sessionId,
+			LimitMessages: cachedLimits,
 		}
 
 		// Save to cache
@@ -381,16 +396,16 @@ func (m *Manager) detectSessions() {
 		}
 	}
 
-	// Get all data within 6 hours from memory cache to ensure complete 5-hour sessions
-	hourlyData, rawLogs := m.memoryCache.GetRecentDataWithLogs(6 * 3600)
-
+	// NEW: Get global timeline of logs across all projects
+	globalTimeline := m.memoryCache.GetGlobalTimeline(6 * 3600) // 6 hours to ensure complete 5-hour sessions
+	util.LogInfo(fmt.Sprintf("Got global timeline with %d entries", len(globalTimeline)))
+	
 	// Get cached window info
 	cachedWindowInfo := m.memoryCache.GetCachedWindowInfo()
 
-	// Detect sessions with raw logs for limit detection
+	// Use global timeline for session detection
 	input := SessionDetectionInput{
-		HourlyData:       hourlyData,
-		RawLogs:          rawLogs,
+		GlobalTimeline:   globalTimeline,
 		CachedWindowInfo: cachedWindowInfo,
 	}
 	m.activeSessions = m.detector.DetectSessionsWithLimits(input)
@@ -427,20 +442,31 @@ func (m *Manager) detectSessions() {
 
 	// Log detailed session info
 	for i, session := range m.activeSessions {
-		util.LogInfo(fmt.Sprintf("Session %d: ID=%s, Window=%s (%s), ResetTime=%s, Tokens=%d, Cost=%.2f",
+		projectNames := make([]string, 0, len(session.Projects))
+		for name := range session.Projects {
+			projectNames = append(projectNames, name)
+		}
+		projectsStr := strings.Join(projectNames, ", ")
+		if projectsStr == "" {
+			projectsStr = "no projects"
+		}
+
+		util.LogInfo(fmt.Sprintf("Session %d: ID=%s, Window=%s (%s), ResetTime=%s, Tokens=%d, Cost=%.2f, Projects=%s",
 			i+1, session.ID,
 			time.Unix(session.StartTime, 0).Format("15:04"),
 			session.WindowSource,
 			time.Unix(session.ResetTime, 0).Format("15:04"),
 			session.TotalTokens,
-			session.TotalCost))
-		util.LogDebug(fmt.Sprintf("Session %s details - StartTime: %s, EndTime: %s, ResetTime: %s, IsActive: %v, IsWindowDetected: %v",
+			session.TotalCost,
+			projectsStr))
+		util.LogDebug(fmt.Sprintf("Session %s details - StartTime: %s, EndTime: %s, ResetTime: %s, IsActive: %v, IsWindowDetected: %v, Projects: %d",
 			session.ID,
 			time.Unix(session.StartTime, 0).Format("2006-01-02 15:04:05"),
 			time.Unix(session.EndTime, 0).Format("2006-01-02 15:04:05"),
 			time.Unix(session.ResetTime, 0).Format("2006-01-02 15:04:05"),
 			session.IsActive,
-			session.IsWindowDetected))
+			session.IsWindowDetected,
+			len(session.Projects)))
 	}
 
 	util.LogInfo(fmt.Sprintf("Detected %d active sessions", len(m.activeSessions)))

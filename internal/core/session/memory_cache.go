@@ -1,11 +1,13 @@
 package session
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
 	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
+	"github.com/penwyp/go-claude-monitor/internal/util"
 )
 
 // WindowDetectionInfo stores sliding window detection state
@@ -24,6 +26,13 @@ type MemoryCacheEntry struct {
 	IsDirty      bool                    // Marks if needs persistence
 	RawLogs      []model.ConversationLog // Raw logs for limit detection
 	WindowInfo   *WindowDetectionInfo    // Sliding window detection state
+}
+
+// TimestampedLog represents a log entry with its timestamp and project info
+type TimestampedLog struct {
+	Log         model.ConversationLog
+	Timestamp   int64  // Unix timestamp for sorting
+	ProjectName string // Project this log belongs to
 }
 
 type MemoryCache struct {
@@ -186,4 +195,41 @@ func (mc *MemoryCache) GetHistoricalLogs(duration int64) []model.ConversationLog
 	}
 
 	return rawLogs
+}
+
+// GetGlobalTimeline returns all logs from all projects sorted by timestamp
+func (mc *MemoryCache) GetGlobalTimeline(duration int64) []TimestampedLog {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+
+	// Create timeline builder
+	tb := NewTimelineBuilder("Local")
+	var allEntries []TimelineEntry
+
+	// Collect timeline entries from all sources
+	for _, entry := range mc.entries {
+		// From raw logs if available
+		if entry.RawLogs != nil && len(entry.RawLogs) > 0 {
+			entries := tb.BuildFromRawLogs(entry.RawLogs, entry.ProjectName)
+			allEntries = append(allEntries, entries...)
+		} else if entry.AggregatedData != nil {
+			// From cached data if no raw logs
+			entries := tb.BuildFromCachedData([]aggregator.AggregatedData{*entry.AggregatedData})
+			allEntries = append(allEntries, entries...)
+		}
+	}
+
+	// Filter by duration
+	if duration > 0 {
+		allEntries = tb.FilterByDuration(allEntries, time.Duration(duration)*time.Second)
+	}
+
+	// Sort and convert to TimestampedLog format
+	sorted := tb.MergeTimelines(allEntries)
+	timeline := tb.ConvertToTimestampedLogs(sorted)
+
+	util.LogDebug(fmt.Sprintf("GetGlobalTimeline: %d entries, %d timeline entries, %d logs after conversion",
+		len(mc.entries), len(allEntries), len(timeline)))
+
+	return timeline
 }
