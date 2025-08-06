@@ -595,3 +595,19 @@ func (m *WindowHistoryManager) CleanOldWindows() int {
 
 	return removedCount
 }
+
+// ClearNonLimitWindows removes all windows except those from limit messages
+func (m *WindowHistoryManager) ClearNonLimitWindows() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := []WindowRecord{}
+	for _, record := range m.history.Windows {
+		if record.Source == "limit_message" && record.IsLimitReached {
+			kept = append(kept, record)
+		}
+	}
+
+	m.history.Windows = kept
+	util.LogInfo(fmt.Sprintf("Cleared window history, kept %d limit message windows", len(kept)))
+}

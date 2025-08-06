@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
+	"github.com/penwyp/go-claude-monitor/internal/core/timeline"
 	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
 )
 
@@ -29,7 +30,7 @@ func TestSlidingWindowDetection(t *testing.T) {
 	}
 
 	// Convert hourly data to global timeline
-	timelineBuilder := NewTimelineBuilder("UTC")
+	timelineBuilder := timeline.NewTimelineBuilder("UTC")
 	entries := timelineBuilder.BuildFromHourlyData(hourlyData)
 	globalTimeline := timelineBuilder.ConvertToTimestampedLogs(entries)
 
@@ -126,7 +127,7 @@ func TestGapDetection(t *testing.T) {
 	}
 
 	// Convert hourly data to global timeline
-	timelineBuilder := NewTimelineBuilder("UTC")
+	timelineBuilder := timeline.NewTimelineBuilder("UTC")
 	entries := timelineBuilder.BuildFromHourlyData(hourlyData)
 	globalTimeline := timelineBuilder.ConvertToTimestampedLogs(entries)
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
+	"github.com/penwyp/go-claude-monitor/internal/core/timeline"
 	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,9 +128,9 @@ func TestActiveSessionDetection(t *testing.T) {
 
 // TestTimelineDeduplication tests the deduplication logic
 func TestTimelineDeduplication(t *testing.T) {
-	tb := NewTimelineBuilder("UTC")
+	tb := timeline.NewTimelineBuilder("UTC")
 	
-	entries := []TimelineEntry{
+	entries := []timeline.TimelineEntry{
 		{
 			Timestamp:       1000,
 			ProjectName:     "project1",

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/penwyp/go-claude-monitor/internal/application/top"
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
 	"github.com/penwyp/go-claude-monitor/internal/core/session"
 	"github.com/penwyp/go-claude-monitor/internal/util"
@@ -76,7 +77,7 @@ func runDetect(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create configuration
-	config := &session.TopConfig{
+	config := &top.TopConfig{
 		DataDir:             expandPath(dataDir),
 		CacheDir:            expandPath(defaultCacheDir),
 		Plan:                detectPlan,
@@ -89,8 +90,11 @@ func runDetect(cmd *cobra.Command, args []string) error {
 		PricingOfflineMode:  detectPricingOffline,
 	}
 
-	// Create session manager
-	manager := session.NewManager(config)
+	// Create orchestrator
+	orchestrator, err := top.NewOrchestrator(config)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
+	}
 
 	// Load and analyze data
 	planLimit := pricing.GetPlan(detectPlan)
@@ -102,13 +106,13 @@ func runDetect(cmd *cobra.Command, args []string) error {
 	fmt.Println(util.FormatSectionSeparator())
 
 	// Load and analyze sessions
-	sessions, err := manager.LoadAndAnalyzeData()
+	sessions, err := orchestrator.LoadAndAnalyzeData()
 	if err != nil {
 		return fmt.Errorf("failed to load and analyze data: %w", err)
 	}
 
 	// Get aggregated metrics
-	aggregated := manager.GetAggregatedMetrics(sessions)
+	aggregated := orchestrator.GetAggregatedMetrics(sessions)
 
 	// Print window detection analysis
 	printWindowAnalysis(sessions)

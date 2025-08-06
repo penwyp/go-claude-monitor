@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/penwyp/go-claude-monitor/internal/application/top"
 	"github.com/penwyp/go-claude-monitor/internal/core/session"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 	"github.com/spf13/cobra"
@@ -112,7 +113,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create configuration
-	config := &session.TopConfig{
+	config := &top.TopConfig{
 		DataDir:             expandPath(dataDir),
 		CacheDir:            expandPath(defaultCacheDir),
 		Plan:                topPlan,
@@ -126,28 +127,26 @@ func runTop(cmd *cobra.Command, args []string) error {
 		PricingOfflineMode:  topPricingOfflineMode,
 	}
 
-	// Run with framework switching support
-	for {
-		// Create session manager
-		manager := session.NewManager(config)
-
-		// Set up signal handling
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt)
-
-		go func() {
-			<-sigChan
-			cancel()
-		}()
-
-		// Run main loop
-		err := manager.Run(ctx)
-
-		return err
+	// Create orchestrator
+	orchestrator, err := top.NewOrchestrator(config)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
 	}
+
+	// Set up signal handling
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	// Run main loop
+	return orchestrator.Run(ctx)
 }
 
 // resetWindowHistory prompts for confirmation and resets the window history

@@ -1,6 +1,7 @@
-package session
+package cache
 
 import (
+	"github.com/penwyp/go-claude-monitor/internal/core/timeline"
 	"fmt"
 	"sync"
 	"time"
@@ -28,12 +29,6 @@ type MemoryCacheEntry struct {
 	WindowInfo   *WindowDetectionInfo    // Sliding window detection state
 }
 
-// TimestampedLog represents a log entry with its timestamp and project info
-type TimestampedLog struct {
-	Log         model.ConversationLog
-	Timestamp   int64  // Unix timestamp for sorting
-	ProjectName string // Project this log belongs to
-}
 
 type MemoryCache struct {
 	mu      sync.RWMutex
@@ -211,13 +206,13 @@ func (mc *MemoryCache) GetLogsForFile(sessionId string) []model.ConversationLog 
 	return entry.RawLogs
 }
 
-func (mc *MemoryCache) GetGlobalTimeline(duration int64) []TimestampedLog {
+func (mc *MemoryCache) GetGlobalTimeline(duration int64) []timeline.TimestampedLog {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()
 
 	// Create timeline builder
-	tb := NewTimelineBuilder("Local")
-	var allEntries []TimelineEntry
+	tb := timeline.NewTimelineBuilder("Local")
+	var allEntries []timeline.TimelineEntry
 
 	// UNIFIED DATA SOURCE: Collect from BOTH raw logs AND aggregated data
 	for _, entry := range mc.entries {

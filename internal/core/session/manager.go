@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"github.com/penwyp/go-claude-monitor/internal/core/monitoring"
 	"github.com/penwyp/go-claude-monitor/internal/core/pricing"
 	"os"
 	"path/filepath"
@@ -52,7 +53,7 @@ type Manager struct {
 	detector       *SessionDetector       // Session detector
 	calculator     *MetricsCalculator     // Metrics calculator
 	display        *TerminalDisplay       // Display component
-	watcher        *FileWatcher           // File watcher
+	watcher        *monitoring.FileWatcher           // File watcher
 	planLimits     pricing.Plan           // Plan limits
 	keyboard       *KeyboardReader        // Keyboard input
 	sorter         *SessionSorter         // Session sorter
@@ -975,7 +976,7 @@ func (m *Manager) persistCache() {
 
 func (m *Manager) startWatcher(ctx context.Context) error {
 	// Initialize file watcher
-	watcher, err := NewFileWatcher([]string{m.config.DataDir})
+	watcher, err := monitoring.NewFileWatcher([]string{m.config.DataDir})
 	if err != nil {
 		return err
 	}

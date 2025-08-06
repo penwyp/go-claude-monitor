@@ -8,6 +8,7 @@ import (
 
 	"github.com/penwyp/go-claude-monitor/internal/core/constants"
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
+	"github.com/penwyp/go-claude-monitor/internal/core/timeline"
 	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 )
@@ -42,10 +43,15 @@ func NewSessionDetectorWithAggregator(aggregator *aggregator.Aggregator, timezon
 	}
 }
 
+// GetWindowHistory returns the window history manager
+func (d *SessionDetector) GetWindowHistory() *WindowHistoryManager {
+	return d.windowHistory
+}
+
 // SessionDetectionInput contains all data needed for session detection
 type SessionDetectionInput struct {
 	CachedWindowInfo map[string]*WindowDetectionInfo // Cached window info by sessionId
-	GlobalTimeline   []TimestampedLog                // Global timeline of logs across all projects
+	GlobalTimeline   []timeline.TimestampedLog                // Global timeline of logs across all projects
 }
 
 // DetectSessionsWithLimits detects sessions with support for limit message analysis
@@ -511,7 +517,7 @@ func (d *SessionDetector) createNewSessionWithWindow(firstData aggregator.Hourly
 }
 
 // addLogToSession adds a timestamped log to a session and updates its statistics
-func (d *SessionDetector) addLogToSession(session *Session, tl TimestampedLog) {
+func (d *SessionDetector) addLogToSession(session *Session, tl timeline.TimestampedLog) {
 	// Get or create project stats
 	projectStats, exists := session.Projects[tl.ProjectName]
 	if !exists {

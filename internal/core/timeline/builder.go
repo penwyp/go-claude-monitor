@@ -1,4 +1,4 @@
-package session
+package timeline
 
 import (
 	"fmt"
@@ -9,14 +9,6 @@ import (
 	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
 )
 
-// TimelineEntry represents a single point in the timeline
-type TimelineEntry struct {
-	Timestamp       int64
-	ProjectName     string
-	Type           string // "message", "limit", "hourly"
-	Data           interface{}
-	IsSupplementary bool   // Marks if this is supplementary data (e.g., aggregated when raw exists)
-}
 
 // TimelineBuilder builds a unified timeline from various data sources
 type TimelineBuilder struct {

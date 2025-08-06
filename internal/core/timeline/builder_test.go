@@ -1,4 +1,4 @@
-package session
+package timeline
 
 import (
 	"testing"
@@ -72,12 +72,12 @@ func TestTimelineBuilder_BuildFromHourlyData(t *testing.T) {
 	
 	entries := tb.BuildFromHourlyData(hourlyData)
 	
-	// Should have 4 entries (first and last for each hour)
-	assert.Len(t, entries, 4)
+	// Should have 2 entries (one for each hour)
+	assert.Len(t, entries, 2)
 	assert.Equal(t, "hourly", entries[0].Type)
 	assert.Equal(t, "project-a", entries[0].ProjectName)
 	assert.Equal(t, int64(1704103300), entries[0].Timestamp)
-	assert.Equal(t, int64(1704106700), entries[1].Timestamp)
+	assert.Equal(t, int64(1704106900), entries[1].Timestamp)
 }
 
 func TestTimelineBuilder_MergeTimelines(t *testing.T) {
@@ -196,11 +196,11 @@ func TestTimelineBuilder_BuildFromCachedData(t *testing.T) {
 	
 	entries := tb.BuildFromCachedData(cachedData)
 	
-	// Should have entries from hourly data (2) + limit messages (1)
-	assert.Len(t, entries, 3)
+	// Should have entries from hourly data (1) + limit messages (1)
+	assert.Len(t, entries, 2)
 	
 	// Verify limit message entry
-	limitEntry := entries[2]
+	limitEntry := entries[1]
 	assert.Equal(t, "limit", limitEntry.Type)
 	assert.Equal(t, int64(1704105000), limitEntry.Timestamp)
 	assert.Equal(t, "project-a", limitEntry.ProjectName)

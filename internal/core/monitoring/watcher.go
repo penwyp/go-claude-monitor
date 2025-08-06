@@ -1,4 +1,4 @@
-package session
+package monitoring
 
 import (
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
