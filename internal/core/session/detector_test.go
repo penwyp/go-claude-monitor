@@ -40,6 +40,10 @@ func TestSlidingWindowDetection(t *testing.T) {
 	}
 
 	sessions := detector.DetectSessionsWithLimits(input)
+	t.Logf("GlobalTimeline length: %d", len(globalTimeline))
+	for i, tl := range globalTimeline {
+		t.Logf("Timeline[%d]: Timestamp=%d, Project=%s", i, tl.Timestamp, tl.ProjectName)
+	}
 	if len(sessions) != 1 {
 		t.Fatalf("Expected 1 session, got %d", len(sessions))
 	}

@@ -198,6 +198,19 @@ func (mc *MemoryCache) GetHistoricalLogs(duration int64) []model.ConversationLog
 }
 
 // GetGlobalTimeline returns all logs from all projects sorted by timestamp
+// GetLogsForFile returns all logs for a specific file/session
+func (mc *MemoryCache) GetLogsForFile(sessionId string) []model.ConversationLog {
+	mc.mu.RLock()
+	defer mc.mu.RUnlock()
+	
+	entry, exists := mc.entries[sessionId]
+	if !exists || entry.RawLogs == nil {
+		return []model.ConversationLog{}
+	}
+	
+	return entry.RawLogs
+}
+
 func (mc *MemoryCache) GetGlobalTimeline(duration int64) []TimestampedLog {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()

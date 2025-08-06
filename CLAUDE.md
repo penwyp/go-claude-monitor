@@ -103,22 +103,50 @@ make release v0.0.1  # Creates git tag and pushes (triggers GitHub Actions)
 
 ### Session Window Detection
 
-The tool uses sophisticated logic to detect 5-hour session windows:
+The tool uses sophisticated logic to detect 5-hour session windows with strict enforcement:
 
-1. **Limit Messages** (🎯): Most accurate - extracts reset time from Claude's limit messages
-2. **Time Gaps** (⏳): Detects >5 hour gaps between messages
-3. **First Message** (📍): Uses first message timestamp for initial sessions
-4. **Hour Alignment** (⚪): Fallback - rounds to nearest hour
+#### Core Principles
+
+1. **Strict 5-Hour Windows**: Each session is exactly 5 hours (EndTime = StartTime + 18000 seconds)
+2. **No Session Merging**: Each window is independent, even if adjacent
+3. **No Window Overlap**: Windows cannot overlap in time
+4. **Limit Messages are Authoritative**: Reset times from limit messages are the most accurate source
+
+#### Detection Priority System
+
+Windows are detected and prioritized as follows:
+
+1. **Priority 10 - Historical Limit Windows** (🎯): Account-level limit windows from history
+2. **Priority 9 - Current Limit Messages** (🎯): Newly detected limit messages with reset times
+3. **Priority 7 - Historical Account Windows**: Other account-level windows from history
+4. **Priority 5 - Time Gaps** (⏳): Detected >5 hour gaps between messages
+5. **Priority 3 - First Message** (📍): Uses first message timestamp for initial sessions
 
 #### Account-Level Session Detection
 
-The tool now supports account-level session detection, which identifies when multiple projects share the same 5-hour limit window:
+The tool supports account-level session detection, which identifies when multiple projects share the same 5-hour limit window:
 
 - **Global Timeline**: Merges logs from all projects into a unified timeline for accurate cross-project session detection
 - **Multi-Project Sessions**: Sessions spanning multiple projects are marked as "Multiple" and tracked as account-level
 - **Window History**: Account-level windows (especially from limit messages) are preserved and used to improve future detection
-- **Automatic Merging**: Overlapping or adjacent account-level windows are automatically merged
+- **No Automatic Merging**: Windows are never merged, maintaining strict 5-hour boundaries
 - **Historical Learning**: The tool learns from past limit messages to accurately identify account-wide rate limits
+
+#### Implementation Details
+
+Key files for session detection:
+
+- `internal/core/session/detector.go`: Core detection logic with `detectSessionsFromGlobalTimeline`
+- `internal/core/session/window_history.go`: Persistent window history management
+- `internal/core/session/timeline_builder.go`: Constructs unified timelines from multiple sources
+- `internal/core/session/limit_parser.go`: Parses limit messages and extracts reset times
+
+#### Performance Optimizations
+
+- **Incremental Detection**: Only reprocesses sessions affected by changed files
+- **Window Caching**: Caches detected windows to avoid redundant detection
+- **Memory Cache**: In-memory cache layer for frequently accessed data
+- **Parallel Processing**: Concurrent file processing with worker pools
 
 ## Data Directory Structure
 

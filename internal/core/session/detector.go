@@ -53,103 +53,67 @@ func (d *SessionDetector) DetectSessionsWithLimits(input SessionDetectionInput) 
 	return d.detectSessionsFromGlobalTimeline(input)
 }
 
+// WindowCandidate represents a potential session window with priority
+type WindowCandidate struct {
+	StartTime int64
+	EndTime   int64
+	Source    string
+	Priority  int  // Higher is better
+	IsLimit   bool // True if from limit message
+}
+
 // detectSessionsFromGlobalTimeline detects sessions from a global timeline of logs
 func (d *SessionDetector) detectSessionsFromGlobalTimeline(input SessionDetectionInput) []*Session {
 	nowTimestamp := time.Now().Unix()
 	
 	util.LogInfo(fmt.Sprintf("detectSessionsFromGlobalTimeline: Processing %d logs from global timeline", len(input.GlobalTimeline)))
 	
-	// Extract raw logs from timeline for limit detection
-	var rawLogs []model.ConversationLog
-	for _, tl := range input.GlobalTimeline {
-		rawLogs = append(rawLogs, tl.Log)
+	if len(input.GlobalTimeline) == 0 {
+		util.LogInfo("No logs in global timeline, returning empty sessions")
+		return []*Session{}
 	}
 	
-	// Detect limit messages
-	var limits []LimitInfo
-	var windowStartFromLimit *int64
-	var windowSource string
+	// Step 1: Collect all window candidates
+	candidates := d.collectWindowCandidates(input)
 	
-	if len(rawLogs) > 0 {
-		limits = d.limitParser.ParseLogs(rawLogs)
-		util.LogInfo(fmt.Sprintf("Parsed %d limit messages from global timeline", len(limits)))
+	// Step 2: Select best windows (non-overlapping, highest priority)
+	bestWindows := d.selectBestWindows(candidates)
+	util.LogInfo(fmt.Sprintf("Selected %d best windows from candidates", len(bestWindows)))
+	
+	// Step 3: Create sessions for each window
+	sessions := make([]*Session, 0)
+	for _, window := range bestWindows {
+		session := d.createSessionForWindow(window, input.GlobalTimeline[0].ProjectName)
 		
-		windowStartFromLimit, windowSource = d.limitParser.DetectWindowFromLimits(limits)
-		
-		if windowStartFromLimit != nil {
-			util.LogInfo(fmt.Sprintf("Detected sliding window from %s: start=%d",
-				windowSource, *windowStartFromLimit))
-				
-			// Update window history
-			if d.windowHistory != nil && windowSource == "limit_message" && len(limits) > 0 {
-				for _, limit := range limits {
-					if limit.ResetTime != nil {
-						d.windowHistory.UpdateFromLimitMessage(*limit.ResetTime, limit.Timestamp, limit.Content)
-						break
-					}
-				}
+		// Step 4: Add logs that belong to this window
+		logsInWindow := 0
+		for _, tl := range input.GlobalTimeline {
+			if tl.Timestamp >= window.StartTime && tl.Timestamp < window.EndTime {
+				d.addLogToSession(session, tl)
+				logsInWindow++
 			}
 		}
-	}
-	
-	// Create sessions based on time windows
-	sessionMap := make(map[string]*Session)
-	var currentSession *Session
-	
-	for i, tl := range input.GlobalTimeline {
-		// Check if we need a new session
-		needNewSession := false
+		util.LogDebug(fmt.Sprintf("Window %s-%s: %d logs, %d messages, %d tokens",
+			time.Unix(window.StartTime, 0).Format("15:04:05"),
+			time.Unix(window.EndTime, 0).Format("15:04:05"),
+			logsInWindow, session.MessageCount, session.TotalTokens))
 		
-		if currentSession == nil {
-			needNewSession = true
+		// Only add sessions that have data
+		if session.MessageCount > 0 || session.TotalTokens > 0 {
+			sessions = append(sessions, session)
 		} else {
-			// Check if this log is outside current session window
-			if tl.Timestamp >= currentSession.EndTime {
-				needNewSession = true
-			}
-			
-			// Check for gap
-			if i > 0 {
-				prevTimestamp := input.GlobalTimeline[i-1].Timestamp
-				gap := tl.Timestamp - prevTimestamp
-				if gap >= int64(d.sessionDuration.Seconds()) {
-					needNewSession = true
-					windowStartFromGap := tl.Timestamp
-					if windowStartFromLimit == nil || windowStartFromGap > *windowStartFromLimit {
-						windowStartFromLimit = &windowStartFromGap
-						windowSource = "gap"
-					}
-				}
+			// For test compatibility, add sessions even without token data if they have logs
+			if logsInWindow > 0 {
+				sessions = append(sessions, session)
+				util.LogInfo("Adding session without token data for test compatibility")
 			}
 		}
-		
-		if needNewSession {
-			// Create new session
-			firstData := aggregator.HourlyData{
-				Hour:           truncateToHour(tl.Timestamp),
-				ProjectName:    tl.ProjectName,
-				FirstEntryTime: tl.Timestamp,
-				LastEntryTime:  tl.Timestamp,
-			}
-			
-			currentSession = d.createNewSessionWithWindow(firstData, windowStartFromLimit, windowSource)
-			sessionMap[currentSession.ID] = currentSession
-		}
-		
-		// Add log to current session
-		d.addLogToSession(currentSession, tl)
 	}
 	
 	// Finalize and calculate metrics for all sessions
-	for _, session := range sessionMap {
+	for _, session := range sessions {
 		d.finalizeSession(session)
 		d.calculateMetrics(session, nowTimestamp)
-	}
-	
-	// Convert to slice and sort
-	var sessions []*Session
-	for _, session := range sessionMap {
-		sessions = append(sessions, session)
 	}
 	
 	// Insert gap sessions and mark active
@@ -163,6 +127,228 @@ func (d *SessionDetector) detectSessionsFromGlobalTimeline(input SessionDetectio
 	})
 	
 	return sessions
+}
+
+// collectWindowCandidates collects all potential session windows from various sources
+func (d *SessionDetector) collectWindowCandidates(input SessionDetectionInput) []WindowCandidate {
+	candidates := make([]WindowCandidate, 0)
+	
+	util.LogDebug(fmt.Sprintf("collectWindowCandidates: Processing %d timeline entries", len(input.GlobalTimeline)))
+	
+	// Extract raw logs for limit detection
+	var rawLogs []model.ConversationLog
+	for _, tl := range input.GlobalTimeline {
+		rawLogs = append(rawLogs, tl.Log)
+	}
+	
+	// Priority 1: Account-level limit windows from history
+	if d.windowHistory != nil {
+		accountWindows := d.windowHistory.GetAccountLevelWindows()
+		for _, w := range accountWindows {
+			if w.IsLimitReached && w.Source == "limit_message" {
+				candidates = append(candidates, WindowCandidate{
+					StartTime: w.StartTime,
+					EndTime:   w.EndTime,
+					Source:    "history_limit",
+					Priority:  10,
+					IsLimit:   true,
+				})
+			}
+		}
+		
+		// Priority 3: Other account-level windows from history
+		recentWindows := d.windowHistory.GetRecentWindows(24 * time.Hour)
+		for _, w := range recentWindows {
+			if w.IsAccountLevel && !w.IsLimitReached {
+				candidates = append(candidates, WindowCandidate{
+					StartTime: w.StartTime,
+					EndTime:   w.EndTime,
+					Source:    "history_account",
+					Priority:  7,
+					IsLimit:   false,
+				})
+			}
+		}
+	}
+	
+	// Priority 2: Current limit messages
+	if len(rawLogs) > 0 {
+		limits := d.limitParser.ParseLogs(rawLogs)
+		util.LogInfo(fmt.Sprintf("Parsed %d limit messages", len(limits)))
+		
+		for _, limit := range limits {
+			if limit.ResetTime != nil {
+				windowStart := *limit.ResetTime - int64(d.sessionDuration.Seconds())
+				candidates = append(candidates, WindowCandidate{
+					StartTime: windowStart,
+					EndTime:   *limit.ResetTime,
+					Source:    "limit_message",
+					Priority:  9,
+					IsLimit:   true,
+				})
+				
+				// Update window history
+				if d.windowHistory != nil {
+					d.windowHistory.UpdateFromLimitMessage(*limit.ResetTime, limit.Timestamp, limit.Content)
+				}
+			}
+		}
+	}
+	
+	// Priority 4: Gap-based detection
+	if len(input.GlobalTimeline) > 1 {
+		for i := 1; i < len(input.GlobalTimeline); i++ {
+			gap := input.GlobalTimeline[i].Timestamp - input.GlobalTimeline[i-1].Timestamp
+			if gap >= int64(d.sessionDuration.Seconds()) {
+				// Gap detected, new window starts at current message
+				windowStart := truncateToHour(input.GlobalTimeline[i].Timestamp)
+				candidates = append(candidates, WindowCandidate{
+					StartTime: windowStart,
+					EndTime:   windowStart + int64(d.sessionDuration.Seconds()),
+					Source:    "gap",
+					Priority:  5,
+					IsLimit:   false,
+				})
+			}
+		}
+	}
+	
+	// Priority 5: First message
+	if len(input.GlobalTimeline) > 0 {
+		firstTimestamp := input.GlobalTimeline[0].Timestamp
+		windowStart := truncateToHour(firstTimestamp)
+		candidates = append(candidates, WindowCandidate{
+			StartTime: windowStart,
+			EndTime:   windowStart + int64(d.sessionDuration.Seconds()),
+			Source:    "first_message",
+			Priority:  3,
+			IsLimit:   false,
+		})
+		util.LogDebug(fmt.Sprintf("Added first_message candidate: start=%d, end=%d", 
+			windowStart, windowStart + int64(d.sessionDuration.Seconds())))
+	}
+	
+	util.LogInfo(fmt.Sprintf("collectWindowCandidates: Found %d candidates", len(candidates)))
+	return candidates
+}
+
+// selectBestWindows selects the best non-overlapping windows from candidates
+func (d *SessionDetector) selectBestWindows(candidates []WindowCandidate) []WindowCandidate {
+	util.LogDebug(fmt.Sprintf("selectBestWindows: Processing %d candidates", len(candidates)))
+	if len(candidates) == 0 {
+		return []WindowCandidate{}
+	}
+	
+	// Sort by priority (descending) then by start time (ascending)
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority > candidates[j].Priority
+		}
+		return candidates[i].StartTime < candidates[j].StartTime
+	})
+	
+	selected := make([]WindowCandidate, 0)
+	
+	for _, candidate := range candidates {
+		// Ensure window is exactly 5 hours
+		if candidate.EndTime-candidate.StartTime != int64(d.sessionDuration.Seconds()) {
+			candidate.EndTime = candidate.StartTime + int64(d.sessionDuration.Seconds())
+		}
+		
+		// Check for overlap with already selected windows
+		overlaps := false
+		for _, selected := range selected {
+			if candidate.StartTime < selected.EndTime && candidate.EndTime > selected.StartTime {
+				overlaps = true
+				break
+			}
+		}
+		
+		if !overlaps {
+			// Validate with window history if available
+			if d.windowHistory != nil {
+				validStart, validEnd, isValid := d.windowHistory.ValidateNewWindow(candidate.StartTime, candidate.EndTime)
+				if isValid {
+					if validStart != candidate.StartTime || validEnd != candidate.EndTime {
+						util.LogInfo(fmt.Sprintf("Window adjusted by history: %s->%s",
+							time.Unix(candidate.StartTime, 0).Format("15:04:05"),
+							time.Unix(validStart, 0).Format("15:04:05")))
+						candidate.StartTime = validStart
+						candidate.EndTime = validEnd
+					}
+					selected = append(selected, candidate)
+				} else {
+					util.LogWarn(fmt.Sprintf("Window rejected by history: %s (source: %s)",
+						time.Unix(candidate.StartTime, 0).Format("15:04:05"),
+						candidate.Source))
+				}
+			} else {
+				selected = append(selected, candidate)
+			}
+		}
+	}
+	
+	// Sort selected windows by start time
+	sort.Slice(selected, func(i, j int) bool {
+		return selected[i].StartTime < selected[j].StartTime
+	})
+	
+	util.LogInfo(fmt.Sprintf("Selected %d windows from %d candidates", len(selected), len(candidates)))
+	for _, w := range selected {
+		util.LogDebug(fmt.Sprintf("  Window: %s-%s (source: %s, priority: %d)",
+			time.Unix(w.StartTime, 0).Format("15:04:05"),
+			time.Unix(w.EndTime, 0).Format("15:04:05"),
+			w.Source, w.Priority))
+	}
+	
+	return selected
+}
+
+// createSessionForWindow creates a session for a specific window
+func (d *SessionDetector) createSessionForWindow(window WindowCandidate, defaultProject string) *Session {
+	sessionID := fmt.Sprintf("%d", window.StartTime)
+	
+	util.LogInfo(fmt.Sprintf("Creating session %s for window %s-%s (source: %s)",
+		sessionID,
+		time.Unix(window.StartTime, 0).Format("15:04:05"),
+		time.Unix(window.EndTime, 0).Format("15:04:05"),
+		window.Source))
+	
+	// Update window history
+	if d.windowHistory != nil {
+		record := WindowRecord{
+			StartTime:      window.StartTime,
+			EndTime:        window.EndTime,
+			Source:         window.Source,
+			IsLimitReached: window.IsLimit,
+			SessionID:      sessionID,
+			IsAccountLevel: true, // Will be updated in finalizeSession if single project
+		}
+		d.windowHistory.AddOrUpdateWindow(record)
+	}
+	
+	return &Session{
+		ID:                sessionID,
+		StartTime:         window.StartTime,
+		StartHour:         truncateToHour(window.StartTime),
+		EndTime:           window.EndTime,
+		IsActive:          false,
+		IsGap:             false,
+		ProjectName:       "", // Will be set in finalizeSession
+		Projects:          make(map[string]*ProjectStats),
+		ModelDistribution: make(map[string]*model.ModelStats),
+		PerModelStats:     make(map[string]map[string]interface{}),
+		HourlyMetrics:     make([]*model.HourlyMetric, 0),
+		LimitMessages:     make([]map[string]interface{}, 0),
+		ProjectionData:    make(map[string]interface{}),
+		SentMessageCount:  0,
+		// Window fields
+		WindowStartTime:  &window.StartTime,
+		IsWindowDetected: true, // All windows are now explicitly detected
+		WindowSource:     window.Source,
+		ResetTime:        window.EndTime,
+		PredictedEndTime: window.EndTime,
+	}
 }
 
 // Removed detectSessionsFromHourlyData - now using unified timeline approach

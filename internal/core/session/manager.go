@@ -380,10 +380,101 @@ func (m *Manager) filterRecentLogs(logs []model.ConversationLog) []model.Convers
 	return recent
 }
 
-func (m *Manager) detectSessions() {
+// incrementalDetectSessions performs incremental session detection for changed files
+func (m *Manager) incrementalDetectSessions(changedFiles []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if len(changedFiles) == 0 {
+		// No changes, use full detection
+		m.fullDetectSessions()
+		return
+	}
+
+	// Get time range of changed files
+	minTime := int64(^uint64(0) >> 1) // Max int64
+	maxTime := int64(0)
+	
+	for _, file := range changedFiles {
+		logs := m.memoryCache.GetLogsForFile(file)
+		for _, log := range logs {
+			ts, err := time.Parse(time.RFC3339, log.Timestamp)
+			if err != nil {
+				continue
+			}
+			timestamp := ts.Unix()
+			if timestamp < minTime {
+				minTime = timestamp
+			}
+			if timestamp > maxTime {
+				maxTime = timestamp
+			}
+		}
+	}
+
+	// Check if we have existing windows that cover this time range
+	existingWindows := make(map[string]*Session)
+	for _, session := range m.activeSessions {
+		if session.StartTime <= maxTime && session.EndTime >= minTime {
+			existingWindows[session.ID] = session
+		}
+	}
+
+	if len(existingWindows) > 0 && m.detector.windowHistory != nil {
+		// We have existing windows, just update the statistics
+		util.LogInfo(fmt.Sprintf("Incremental update for %d existing windows", len(existingWindows)))
+		
+		// Get updated global timeline
+		globalTimeline := m.memoryCache.GetGlobalTimeline(6 * 3600)
+		
+		// Recalculate only affected sessions
+		for sessionID, oldSession := range existingWindows {
+			// Create new session with same window
+			newSession := &Session{
+				ID:                sessionID,
+				StartTime:         oldSession.StartTime,
+				EndTime:           oldSession.EndTime,
+				Projects:          make(map[string]*ProjectStats),
+				ModelDistribution: make(map[string]*model.ModelStats),
+				PerModelStats:     make(map[string]map[string]interface{}),
+				HourlyMetrics:     make([]*model.HourlyMetric, 0),
+				LimitMessages:     make([]map[string]interface{}, 0),
+				ProjectionData:    make(map[string]interface{}),
+				WindowStartTime:   oldSession.WindowStartTime,
+				IsWindowDetected:  oldSession.IsWindowDetected,
+				WindowSource:      oldSession.WindowSource,
+				ResetTime:         oldSession.ResetTime,
+			}
+			
+			// Add logs that belong to this window
+			for _, tl := range globalTimeline {
+				if tl.Timestamp >= newSession.StartTime && tl.Timestamp < newSession.EndTime {
+					m.detector.addLogToSession(newSession, tl)
+				}
+			}
+			
+			// Finalize and calculate metrics
+			m.detector.finalizeSession(newSession)
+			m.detector.calculateMetrics(newSession, time.Now().Unix())
+			m.calculator.Calculate(newSession)
+			
+			// Update in active sessions
+			for i, s := range m.activeSessions {
+				if s.ID == sessionID {
+					m.activeSessions[i] = newSession
+					break
+				}
+			}
+		}
+	} else {
+		// No existing windows or window history, do full detection
+		util.LogInfo("No existing windows found, performing full detection")
+		m.fullDetectSessions()
+	}
+}
+
+// fullDetectSessions performs full session detection (renamed from detectSessions)
+func (m *Manager) fullDetectSessions() {
 	// First, load historical limit windows from the past 1 day
 	// This ensures we have the most accurate windows from limit messages
 	if m.detector.windowHistory != nil {
@@ -409,6 +500,14 @@ func (m *Manager) detectSessions() {
 		CachedWindowInfo: cachedWindowInfo,
 	}
 	m.activeSessions = m.detector.DetectSessionsWithLimits(input)
+}
+
+func (m *Manager) detectSessions() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Use full detection as the default
+	m.fullDetectSessions()
 
 	// Calculate metrics for each session and store window info
 	for _, session := range m.activeSessions {
@@ -561,8 +660,39 @@ func (m *Manager) refreshData() {
 		return
 	}
 
+	// Track which files are new or changed
+	changedFiles := m.identifyChangedFiles(files)
+	
 	m.loadFiles(files)
-	m.detectSessions()
+	
+	// Use incremental detection if we have changed files
+	if len(changedFiles) > 0 {
+		m.incrementalDetectSessions(changedFiles)
+	} else {
+		m.detectSessions()
+	}
+}
+
+// identifyChangedFiles returns files that are new or have changed since last load
+func (m *Manager) identifyChangedFiles(files []string) []string {
+	changedFiles := make([]string, 0)
+	
+	for _, file := range files {
+		sessionId := extractSessionId(file)
+		
+		// Check if file is in memory cache
+		if entry, exists := m.memoryCache.Get(sessionId); exists {
+			// File exists, check if it's marked as dirty (changed)
+			if entry.IsDirty {
+				changedFiles = append(changedFiles, sessionId)
+			}
+		} else {
+			// New file
+			changedFiles = append(changedFiles, sessionId)
+		}
+	}
+	
+	return changedFiles
 }
 
 func (m *Manager) clearWindowHistory() {
