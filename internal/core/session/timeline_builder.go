@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -10,10 +11,11 @@ import (
 
 // TimelineEntry represents a single point in the timeline
 type TimelineEntry struct {
-	Timestamp   int64
-	ProjectName string
-	Type        string // "message", "limit", "hourly"
-	Data        interface{}
+	Timestamp       int64
+	ProjectName     string
+	Type           string // "message", "limit", "hourly"
+	Data           interface{}
+	IsSupplementary bool   // Marks if this is supplementary data (e.g., aggregated when raw exists)
 }
 
 // TimelineBuilder builds a unified timeline from various data sources
@@ -55,23 +57,14 @@ func (tb *TimelineBuilder) BuildFromRawLogs(logs []model.ConversationLog, projec
 
 // BuildFromHourlyData builds timeline from aggregated hourly data
 func (tb *TimelineBuilder) BuildFromHourlyData(hourlyData []aggregator.HourlyData) []TimelineEntry {
-	entries := make([]TimelineEntry, 0, len(hourlyData)*2)
+	entries := make([]TimelineEntry, 0, len(hourlyData))
 	
 	for _, data := range hourlyData {
-		// Add entry for first message in the hour
+		// Use the first entry time as the representative timestamp for the hour
+		// This prevents double-counting tokens when converting to logs
 		if data.FirstEntryTime > 0 {
 			entries = append(entries, TimelineEntry{
 				Timestamp:   data.FirstEntryTime,
-				ProjectName: data.ProjectName,
-				Type:        "hourly",
-				Data:        data,
-			})
-		}
-		
-		// Add entry for last message in the hour if different
-		if data.LastEntryTime > 0 && data.LastEntryTime != data.FirstEntryTime {
-			entries = append(entries, TimelineEntry{
-				Timestamp:   data.LastEntryTime,
 				ProjectName: data.ProjectName,
 				Type:        "hourly",
 				Data:        data,
@@ -150,8 +143,10 @@ func (tb *TimelineBuilder) ConvertToTimestampedLogs(entries []TimelineEntry) []T
 					Message: model.Message{
 						Model: data.Model,
 						Usage: model.Usage{
-							InputTokens:  data.InputTokens,
-							OutputTokens: data.OutputTokens,
+							InputTokens:              data.InputTokens,
+							OutputTokens:             data.OutputTokens,
+							CacheCreationInputTokens: data.CacheCreation,
+							CacheReadInputTokens:     data.CacheRead,
 						},
 					},
 				}
@@ -183,4 +178,48 @@ func (tb *TimelineBuilder) FilterByDuration(entries []TimelineEntry, duration ti
 	}
 	
 	return filtered
+}
+
+// DeduplicateEntries removes duplicate entries, preferring primary data over supplementary
+func (tb *TimelineBuilder) DeduplicateEntries(entries []TimelineEntry) []TimelineEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	
+	// Create a map to track seen entries
+	// Key format: "timestamp-project-type" for uniqueness
+	seen := make(map[string]bool)
+	result := make([]TimelineEntry, 0, len(entries))
+	
+	// First pass: Add all non-supplementary entries
+	for _, entry := range entries {
+		if !entry.IsSupplementary {
+			key := tb.getEntryKey(entry)
+			seen[key] = true
+			result = append(result, entry)
+		}
+	}
+	
+	// Second pass: Add supplementary entries that don't have primary data
+	for _, entry := range entries {
+		if entry.IsSupplementary {
+			key := tb.getEntryKey(entry)
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, entry)
+			}
+		}
+	}
+	
+	return result
+}
+
+// getEntryKey generates a unique key for deduplication
+func (tb *TimelineBuilder) getEntryKey(entry TimelineEntry) string {
+	// Round timestamp to nearest minute for hourly data comparison
+	timestamp := entry.Timestamp
+	if entry.Type == "hourly" {
+		timestamp = (timestamp / 60) * 60 // Round to minute
+	}
+	return fmt.Sprintf("%d-%s-%s", timestamp, entry.ProjectName, entry.Type)
 }

@@ -42,19 +42,20 @@ func extractSessionId(filePath string) string {
 }
 
 type Manager struct {
-	config      *TopConfig
-	fileCache   cache.Cache            // Reuse existing cache.Cache
-	memoryCache *MemoryCache           // Memory cache layer
-	scanner     *scanner.FileScanner   // Reuse existing scanner
-	parser      *parser.Parser         // Reuse existing parser
-	aggregator  *aggregator.Aggregator // Reuse existing aggregator
-	detector    *SessionDetector       // Session detector
-	calculator  *MetricsCalculator     // Metrics calculator
-	display     *TerminalDisplay       // Display component
-	watcher     *FileWatcher           // File watcher
-	planLimits  pricing.Plan           // Plan limits
-	keyboard    *KeyboardReader        // Keyboard input
-	sorter      *SessionSorter         // Session sorter
+	config         *TopConfig
+	sessionConfig  SessionConfig          // Session detection configuration
+	fileCache      cache.Cache            // Reuse existing cache.Cache
+	memoryCache    *MemoryCache           // Memory cache layer
+	scanner        *scanner.FileScanner   // Reuse existing scanner
+	parser         *parser.Parser         // Reuse existing parser
+	aggregator     *aggregator.Aggregator // Reuse existing aggregator
+	detector       *SessionDetector       // Session detector
+	calculator     *MetricsCalculator     // Metrics calculator
+	display        *TerminalDisplay       // Display component
+	watcher        *FileWatcher           // File watcher
+	planLimits     pricing.Plan           // Plan limits
+	keyboard       *KeyboardReader        // Keyboard input
+	sorter         *SessionSorter         // Session sorter
 
 	mu             sync.RWMutex
 	activeSessions []*Session
@@ -82,19 +83,23 @@ func NewManager(config *TopConfig) *Manager {
 		agg = aggregator.NewAggregatorWithTimezone(config.Timezone)
 	}
 
+	// Get session configuration
+	sessionConfig := GetSessionConfig()
+	
 	return &Manager{
-		config:      config,
-		fileCache:   fileCache,
-		memoryCache: NewMemoryCache(),
-		scanner:     scanner.NewFileScanner(config.DataDir),
-		parser:      parser.NewParser(config.Concurrency),
-		aggregator:  agg,
-		detector:    NewSessionDetectorWithAggregator(agg, config.Timezone, config.CacheDir), // Create detector with aggregator instance and cache dir
-		calculator:  NewMetricsCalculator(planLimits),
-		display:     NewTerminalDisplay(config),
-		planLimits:  planLimits,
-		sorter:      NewSessionSorter(),
-		state:       model.InteractionState{},
+		config:        config,
+		sessionConfig: sessionConfig,
+		fileCache:     fileCache,
+		memoryCache:   NewMemoryCache(),
+		scanner:       scanner.NewFileScanner(config.DataDir),
+		parser:        parser.NewParser(config.Concurrency),
+		aggregator:    agg,
+		detector:      NewSessionDetectorWithAggregator(agg, config.Timezone, config.CacheDir), // Create detector with aggregator instance and cache dir
+		calculator:    NewMetricsCalculator(planLimits),
+		display:       NewTerminalDisplay(config),
+		planLimits:    planLimits,
+		sorter:        NewSessionSorter(),
+		state:         model.InteractionState{},
 	}
 }
 
@@ -224,7 +229,7 @@ func (m *Manager) preload() error {
 		return err
 	}
 
-	util.LogInfo(fmt.Sprintf("Found %d recent files (modified within 5 hours)", len(files)))
+	util.LogInfo(fmt.Sprintf("Found %d files to process", len(files)))
 
 	// 3. Load data in parallel (reuse parser's concurrency mechanism)
 	m.loadFiles(files)
@@ -242,22 +247,46 @@ func (m *Manager) scanRecentFiles() ([]string, error) {
 		return nil, err
 	}
 
-	// Filter files modified within 6 hours to ensure we capture complete 5-hour sessions
-	cutoff := time.Now().Add(-6 * time.Hour).Unix()
-	var recentFiles []string
-
-	for _, file := range allFiles {
-		info, err := util.GetFileInfo(file)
-		if err != nil {
-			continue
+	// Apply configuration-based filtering
+	switch m.sessionConfig.TimelineMode {
+	case "full":
+		// Return ALL files without time filtering
+		return allFiles, nil
+	case "recent":
+		// Legacy behavior: filter by recent modification time
+		cutoff := time.Now().Add(-48 * time.Hour).Unix()
+		var recentFiles []string
+		for _, file := range allFiles {
+			info, err := util.GetFileInfo(file)
+			if err != nil {
+				continue
+			}
+			if info.ModTime > cutoff {
+				recentFiles = append(recentFiles, file)
+			}
 		}
-
-		if info.ModTime > cutoff {
-			recentFiles = append(recentFiles, file)
+		return recentFiles, nil
+	case "optimized":
+		// Balanced approach: load files based on retention config
+		if m.sessionConfig.DataRetentionHours > 0 {
+			cutoff := time.Now().Add(-time.Duration(m.sessionConfig.DataRetentionHours) * time.Hour).Unix()
+			var filteredFiles []string
+			for _, file := range allFiles {
+				info, err := util.GetFileInfo(file)
+				if err != nil {
+					continue
+				}
+				if info.ModTime > cutoff {
+					filteredFiles = append(filteredFiles, file)
+				}
+			}
+			return filteredFiles, nil
 		}
+		return allFiles, nil
+	default:
+		// Default to full mode
+		return allFiles, nil
 	}
-
-	return recentFiles, nil
 }
 
 func (m *Manager) loadFiles(files []string) {
@@ -313,7 +342,7 @@ func (m *Manager) parseAndCacheFiles(files []string, sessionIdMap map[string]str
 			continue
 		}
 
-		// Filter logs within 5 hours
+		// Use all logs without filtering
 		recentLogs := m.filterRecentLogs(result.Logs)
 		if len(recentLogs) == 0 {
 			continue
@@ -363,21 +392,28 @@ func (m *Manager) parseAndCacheFiles(files []string, sessionIdMap map[string]str
 }
 
 func (m *Manager) filterRecentLogs(logs []model.ConversationLog) []model.ConversationLog {
-	cutoff := time.Now().Add(-6 * time.Hour).Unix() // Expand to 6 hours to ensure complete 5-hour sessions
-	var recent []model.ConversationLog
-
+	// Apply configuration-based filtering
+	if m.sessionConfig.DataRetentionHours <= 0 {
+		// No filtering - return all logs
+		return logs
+	}
+	
+	// Filter based on retention configuration
+	cutoff := time.Now().Add(-time.Duration(m.sessionConfig.DataRetentionHours) * time.Hour).Unix()
+	var filtered []model.ConversationLog
+	
 	for _, log := range logs {
 		ts, err := time.Parse(time.RFC3339, log.Timestamp)
 		if err != nil {
 			continue
 		}
-
+		
 		if ts.Unix() > cutoff {
-			recent = append(recent, log)
+			filtered = append(filtered, log)
 		}
 	}
-
-	return recent
+	
+	return filtered
 }
 
 // incrementalDetectSessions performs incremental session detection for changed files
@@ -487,8 +523,9 @@ func (m *Manager) fullDetectSessions() {
 		}
 	}
 
-	// NEW: Get global timeline of logs across all projects
-	globalTimeline := m.memoryCache.GetGlobalTimeline(6 * 3600) // 6 hours to ensure complete 5-hour sessions
+	// Get global timeline of ALL logs across all projects
+	// Use 0 to get all data without time restrictions
+	globalTimeline := m.memoryCache.GetGlobalTimeline(0) // 0 means no time limit
 	util.LogInfo(fmt.Sprintf("Got global timeline with %d entries", len(globalTimeline)))
 	
 	// Get cached window info
@@ -665,8 +702,8 @@ func (m *Manager) refreshData() {
 	
 	m.loadFiles(files)
 	
-	// Use incremental detection if we have changed files
-	if len(changedFiles) > 0 {
+	// Use incremental detection if enabled and we have changed files
+	if m.sessionConfig.EnableIncrementalDetection && len(changedFiles) > 0 {
 		m.incrementalDetectSessions(changedFiles)
 	} else {
 		m.detectSessions()

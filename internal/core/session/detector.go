@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -119,12 +120,36 @@ func (d *SessionDetector) detectSessionsFromGlobalTimeline(input SessionDetectio
 	// Insert gap sessions and mark active
 	sessions = d.insertGapSessions(sessions)
 	sessions = d.deduplicateSessions(sessions)
+	
+	// Detect and add active session if needed
+	sessions = d.detectActiveSession(sessions, nowTimestamp)
+	
 	d.markActiveSessions(sessions, nowTimestamp)
 	
 	// Sort by start time (most recent first)
 	sort.Slice(sessions, func(i, j int) bool {
 		return sessions[i].StartTime > sessions[j].StartTime
 	})
+	
+	// Validate token counts
+	var totalSessionTokens int64
+	var timelineTokens int64
+	for _, session := range sessions {
+		totalSessionTokens += int64(session.TotalTokens)
+	}
+	for _, tl := range input.GlobalTimeline {
+		usage := tl.Log.Message.Usage
+		timelineTokens += int64(usage.InputTokens + usage.OutputTokens + 
+			usage.CacheCreationInputTokens + usage.CacheReadInputTokens)
+	}
+	
+	if totalSessionTokens != timelineTokens && timelineTokens > 0 {
+		discrepancy := float64(totalSessionTokens-timelineTokens) / float64(timelineTokens) * 100
+		if math.Abs(discrepancy) > 1 { // Only warn if discrepancy is more than 1%
+			util.LogWarn(fmt.Sprintf("Token count validation: Sessions=%d, Timeline=%d (%.1f%% difference)",
+				totalSessionTokens, timelineTokens, discrepancy))
+		}
+	}
 	
 	return sessions
 }
@@ -516,7 +541,9 @@ func (d *SessionDetector) addLogToSession(session *Session, tl TimestampedLog) {
 	
 	// Process the log message if it has usage data
 	usage := tl.Log.Message.Usage
-	totalTokens := usage.InputTokens + usage.OutputTokens
+	// Include all token types: input, output, cache creation, and cache read
+	totalTokens := usage.InputTokens + usage.OutputTokens + 
+		usage.CacheCreationInputTokens + usage.CacheReadInputTokens
 	if totalTokens > 0 {
 		modelName := util.SimplifyModelName(tl.Log.Message.Model)
 		
@@ -925,4 +952,101 @@ func (d *SessionDetector) deduplicateSessions(sessions []*Session) []*Session {
 	}
 
 	return uniqueSessions
+}
+
+// detectActiveSession checks if we should create an active session
+func (d *SessionDetector) detectActiveSession(sessions []*Session, nowTimestamp int64) []*Session {
+	if len(sessions) == 0 {
+		// No historical sessions, create initial active session if within window
+		return d.createInitialActiveSession(nowTimestamp)
+	}
+	
+	// Find the most recent session
+	var lastSession *Session
+	for _, s := range sessions {
+		if lastSession == nil || s.EndTime > lastSession.EndTime {
+			lastSession = s
+		}
+	}
+	
+	// Check if we need a new active session
+	if nowTimestamp > lastSession.EndTime {
+		// Calculate the next window start
+		newStart := lastSession.EndTime
+		newEnd := newStart + int64(d.sessionDuration.Seconds())
+		
+		// Check if we're currently in this window
+		if nowTimestamp >= newStart && nowTimestamp < newEnd {
+			activeSession := d.createActiveSessionWindow(newStart, newEnd, nowTimestamp)
+			if activeSession != nil {
+				// Add to beginning of list (most recent first)
+				sessions = append([]*Session{activeSession}, sessions...)
+				util.LogInfo(fmt.Sprintf("Created active session: %s (%s-%s)",
+					activeSession.ID,
+					time.Unix(newStart, 0).Format("15:04"),
+					time.Unix(newEnd, 0).Format("15:04")))
+			}
+		}
+	}
+	
+	return sessions
+}
+
+// createInitialActiveSession creates the first active session when no history exists
+func (d *SessionDetector) createInitialActiveSession(nowTimestamp int64) []*Session {
+	// Calculate current 5-hour window
+	windowStart := (nowTimestamp / 3600) * 3600 // Round down to hour
+	windowEnd := windowStart + int64(d.sessionDuration.Seconds())
+	
+	// Check if we're within the window
+	if nowTimestamp >= windowStart && nowTimestamp < windowEnd {
+		activeSession := d.createActiveSessionWindow(windowStart, windowEnd, nowTimestamp)
+		if activeSession != nil {
+			return []*Session{activeSession}
+		}
+	}
+	
+	return []*Session{}
+}
+
+// createActiveSessionWindow creates an active session for the given window
+func (d *SessionDetector) createActiveSessionWindow(windowStart, windowEnd, nowTimestamp int64) *Session {
+	sessionID := fmt.Sprintf("%d", windowStart)
+	
+	// Create the active session
+	activeSession := &Session{
+		ID:                sessionID,
+		StartTime:         windowStart,
+		EndTime:           windowEnd,
+		ResetTime:         windowEnd,
+		IsActive:          true,
+		IsWindowDetected:  true,
+		WindowSource:      "active_detection",
+		WindowStartTime:   &windowStart,
+		FirstEntryTime:    nowTimestamp,
+		Projects:          make(map[string]*ProjectStats),
+		ModelDistribution: make(map[string]*model.ModelStats),
+		PerModelStats:     make(map[string]map[string]interface{}),
+		HourlyMetrics:     make([]*model.HourlyMetric, 0),
+		LimitMessages:     make([]map[string]interface{}, 0),
+		ProjectionData:    make(map[string]interface{}),
+	}
+	
+	// Add to window history if available
+	if d.windowHistory != nil {
+		record := WindowRecord{
+			StartTime:      windowStart,
+			EndTime:        windowEnd,
+			Source:         "active_detection",
+			IsLimitReached: false,
+			SessionID:      sessionID,
+			IsAccountLevel: true,
+		}
+		d.windowHistory.AddOrUpdateWindow(record)
+	}
+	
+	// Calculate initial metrics
+	d.calculateMetrics(activeSession, nowTimestamp)
+	
+	return activeSession
 }

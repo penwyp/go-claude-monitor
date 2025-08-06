@@ -219,15 +219,22 @@ func (mc *MemoryCache) GetGlobalTimeline(duration int64) []TimestampedLog {
 	tb := NewTimelineBuilder("Local")
 	var allEntries []TimelineEntry
 
-	// Collect timeline entries from all sources
+	// UNIFIED DATA SOURCE: Collect from BOTH raw logs AND aggregated data
 	for _, entry := range mc.entries {
-		// From raw logs if available
+		// Primary source: Raw logs if available
 		if entry.RawLogs != nil && len(entry.RawLogs) > 0 {
 			entries := tb.BuildFromRawLogs(entry.RawLogs, entry.ProjectName)
 			allEntries = append(allEntries, entries...)
-		} else if entry.AggregatedData != nil {
-			// From cached data if no raw logs
+		}
+		
+		// Supplementary source: ALWAYS include aggregated data as backup
+		// This ensures we have complete historical coverage
+		if entry.AggregatedData != nil {
 			entries := tb.BuildFromCachedData([]aggregator.AggregatedData{*entry.AggregatedData})
+			// Mark as supplementary to handle deduplication later
+			for i := range entries {
+				entries[i].IsSupplementary = true
+			}
 			allEntries = append(allEntries, entries...)
 		}
 	}
@@ -237,6 +244,9 @@ func (mc *MemoryCache) GetGlobalTimeline(duration int64) []TimestampedLog {
 		allEntries = tb.FilterByDuration(allEntries, time.Duration(duration)*time.Second)
 	}
 
+	// Deduplicate entries (prefer raw logs over aggregated data)
+	allEntries = tb.DeduplicateEntries(allEntries)
+	
 	// Sort and convert to TimestampedLog format
 	sorted := tb.MergeTimelines(allEntries)
 	timeline := tb.ConvertToTimestampedLogs(sorted)
