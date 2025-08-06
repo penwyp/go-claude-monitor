@@ -23,12 +23,14 @@ type FileEvent struct {
 
 // InteractionState represents the current UI interaction state
 type InteractionState struct {
-	IsPaused      bool
-	ShowHelp      bool
-	ForceRefresh  bool
-	LayoutStyle   int    // 0: Full Dashboard, 1: Minimal
-	StatusMessage string // Status message to display
-	ConfirmDialog *ConfirmDialog
+	IsPaused       bool
+	ShowHelp       bool
+	ForceRefresh   bool
+	LayoutStyle    int    // 0: Full Dashboard, 1: Minimal
+	StatusMessage  string // Status message to display
+	ConfirmDialog  *ConfirmDialog
+	IsLoading      bool   // Whether data is currently being loaded
+	LoadingMessage string // Loading status message
 }
 
 // ConfirmDialog represents a confirmation dialog

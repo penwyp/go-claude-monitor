@@ -114,6 +114,12 @@ func (td *TerminalDisplay) RenderWithState(sessions []*Session, state model.Inte
 	// Update help state tracking
 	td.previousShowHelp = false
 
+	// Show loading screen if data is being loaded
+	if state.IsLoading {
+		td.renderLoadingScreen(state.LoadingMessage)
+		return
+	}
+
 	// Calculate aggregated metrics
 	aggregated := td.calculateAggregatedMetrics(sessions)
 
@@ -409,4 +415,77 @@ func wrapText(text string, width int) []string {
 	}
 
 	return lines
+}
+
+// renderLoadingScreen displays a loading message with animation
+func (td *TerminalDisplay) renderLoadingScreen(message string) {
+	// Move cursor to home position
+	fmt.Print(util.MoveCursorHome)
+	
+	// Clear screen content
+	fmt.Print("\033[2J") // Clear entire screen
+	fmt.Print(util.MoveCursorHome)
+	
+	// Center the loading message vertically and horizontally
+	termHeight := 24 // Assume terminal height
+	termWidth := 80  // Assume terminal width
+	
+	// Move to vertical center
+	for i := 0; i < termHeight/2-5; i++ {
+		fmt.Println()
+	}
+	
+	// Display loading box
+	boxWidth := 50
+	padding := (termWidth - boxWidth) / 2
+	
+	// Top border
+	fmt.Printf("%s╔%s╗\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
+	
+	// Loading title
+	title := "Claude Monitor"
+	titlePadding := (boxWidth - 2 - len(title)) / 2
+	fmt.Printf("%s║%s%s%s║\n", 
+		strings.Repeat(" ", padding),
+		strings.Repeat(" ", titlePadding),
+		title,
+		strings.Repeat(" ", boxWidth-2-titlePadding-len(title)))
+	
+	// Separator
+	fmt.Printf("%s╠%s╣\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
+	
+	// Empty line
+	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), strings.Repeat(" ", boxWidth-2))
+	
+	// Loading message
+	if message == "" {
+		message = "Loading data..."
+	}
+	
+	// Add loading animation
+	loadingChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	animIndex := int(time.Now().Unix() / 1) % len(loadingChars) // Change every second
+	animatedMessage := fmt.Sprintf("%s %s", loadingChars[animIndex], message)
+	
+	msgPadding := (boxWidth - 2 - len(animatedMessage)) / 2
+	fmt.Printf("%s║%s%s%s║\n",
+		strings.Repeat(" ", padding),
+		strings.Repeat(" ", msgPadding),
+		animatedMessage,
+		strings.Repeat(" ", boxWidth-2-msgPadding-len(animatedMessage)))
+	
+	// Empty line
+	fmt.Printf("%s║%s║\n", strings.Repeat(" ", padding), strings.Repeat(" ", boxWidth-2))
+	
+	// Instruction
+	instruction := "Press 'q' to quit"
+	instrPadding := (boxWidth - 2 - len(instruction)) / 2
+	fmt.Printf("%s║%s%s%s║\n",
+		strings.Repeat(" ", padding),
+		strings.Repeat(" ", instrPadding),
+		instruction,
+		strings.Repeat(" ", boxWidth-2-instrPadding-len(instruction)))
+	
+	// Bottom border
+	fmt.Printf("%s╚%s╝\n", strings.Repeat(" ", padding), strings.Repeat("═", boxWidth-2))
 }

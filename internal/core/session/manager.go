@@ -57,10 +57,15 @@ type Manager struct {
 	keyboard       *KeyboardReader        // Keyboard input
 	sorter         *SessionSorter         // Session sorter
 
-	mu             sync.RWMutex
-	activeSessions []*Session
-	lastCacheSave  int64
-	state          model.InteractionState // Interaction state
+	mu                sync.RWMutex
+	activeSessions    []*Session
+	previousSessions  []*Session              // Keep previous valid sessions during refresh
+	isLoading         bool                   // Loading state flag
+	loadingMessage    string                 // Loading status message
+	lastDataUpdate    int64                  // Timestamp of last successful data update
+	refreshMutex      sync.Mutex             // Prevent concurrent refreshes
+	lastCacheSave     int64
+	state             model.InteractionState // Interaction state
 }
 
 func NewManager(config *TopConfig) *Manager {
@@ -141,17 +146,8 @@ func (m *Manager) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize timezone: %w", err)
 	}
 
-	// Phase 1: Preload data (reuse cache.Preload)
-	if err := m.preload(); err != nil {
-		return fmt.Errorf("preload failed: %w", err)
-	}
-
-	// Phase 2: Start file monitoring
-	if err := m.startWatcher(ctx); err != nil {
-		return fmt.Errorf("failed to start file watcher: %w", err)
-	}
-
-	// Phase 4: Initialize keyboard for default framework
+	// Enter alternate screen mode early to show loading state
+	// Phase 1: Initialize keyboard for default framework
 	keyboard, err := NewKeyboardReader()
 	if err != nil {
 		return fmt.Errorf("failed to initialize keyboard: %w", err)
@@ -163,7 +159,33 @@ func (m *Manager) Run(ctx context.Context) error {
 	m.display.EnterAlternateScreen()
 	defer m.display.ExitAlternateScreen()
 
-	// Phase 5: Main loop for default framework
+	// Set initial loading state
+	m.mu.Lock()
+	m.isLoading = true
+	m.loadingMessage = "Initializing and loading data..."
+	m.mu.Unlock()
+
+	// Show initial loading screen
+	m.updateDisplay()
+
+	// Phase 2: Preload data synchronously (reuse cache.Preload)
+	if err := m.preload(); err != nil {
+		return fmt.Errorf("preload failed: %w", err)
+	}
+
+	// Mark data loading as complete
+	m.mu.Lock()
+	m.isLoading = false
+	m.loadingMessage = ""
+	m.lastDataUpdate = time.Now().Unix()
+	m.mu.Unlock()
+
+	// Phase 3: Start file monitoring
+	if err := m.startWatcher(ctx); err != nil {
+		return fmt.Errorf("failed to start file watcher: %w", err)
+	}
+
+	// Phase 4: Main loop for default framework
 	uiTicker := time.NewTicker(time.Duration(1000/m.config.UIRefreshRate) * time.Millisecond)
 	defer uiTicker.Stop()
 
@@ -173,7 +195,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	cacheTicker := time.NewTicker(1 * time.Minute)
 	defer cacheTicker.Stop()
 
-	// Initial display
+	// Initial display with loaded data
 	m.updateDisplay()
 
 	for {
@@ -191,7 +213,7 @@ func (m *Manager) Run(ctx context.Context) error {
 		case <-dataTicker.C:
 			// Data refresh (skip if paused)
 			if !m.state.IsPaused || m.state.ForceRefresh {
-				m.refreshData()
+				m.refreshDataAtomic()
 				m.state.ForceRefresh = false
 			}
 
@@ -416,16 +438,18 @@ func (m *Manager) filterRecentLogs(logs []model.ConversationLog) []model.Convers
 	return filtered
 }
 
-// incrementalDetectSessions performs incremental session detection for changed files
-func (m *Manager) incrementalDetectSessions(changedFiles []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+// incrementalDetectSessionsAtomic performs incremental session detection for changed files without modifying state
+func (m *Manager) incrementalDetectSessionsAtomic(changedFiles []string) []*Session {
 	if len(changedFiles) == 0 {
 		// No changes, use full detection
-		m.fullDetectSessions()
-		return
+		return m.fullDetectSessionsAtomic()
 	}
+
+	// Get current sessions (safely)
+	m.mu.RLock()
+	currentSessions := make([]*Session, len(m.activeSessions))
+	copy(currentSessions, m.activeSessions)
+	m.mu.RUnlock()
 
 	// Get time range of changed files
 	minTime := int64(^uint64(0) >> 1) // Max int64
@@ -450,7 +474,7 @@ func (m *Manager) incrementalDetectSessions(changedFiles []string) {
 
 	// Check if we have existing windows that cover this time range
 	existingWindows := make(map[string]*Session)
-	for _, session := range m.activeSessions {
+	for _, session := range currentSessions {
 		if session.StartTime <= maxTime && session.EndTime >= minTime {
 			existingWindows[session.ID] = session
 		}
@@ -463,11 +487,20 @@ func (m *Manager) incrementalDetectSessions(changedFiles []string) {
 		// Get updated global timeline
 		globalTimeline := m.memoryCache.GetGlobalTimeline(6 * 3600)
 		
+		// Prepare new session list
+		newSessions := make([]*Session, 0, len(currentSessions))
+		
 		// Recalculate only affected sessions
-		for sessionID, oldSession := range existingWindows {
+		for _, oldSession := range currentSessions {
+			if _, isAffected := existingWindows[oldSession.ID]; !isAffected {
+				// Session not affected, keep as is
+				newSessions = append(newSessions, oldSession)
+				continue
+			}
+			
 			// Create new session with same window
 			newSession := &Session{
-				ID:                sessionID,
+				ID:                oldSession.ID,
 				StartTime:         oldSession.StartTime,
 				EndTime:           oldSession.EndTime,
 				Projects:          make(map[string]*ProjectStats),
@@ -494,23 +527,27 @@ func (m *Manager) incrementalDetectSessions(changedFiles []string) {
 			m.detector.calculateMetrics(newSession, time.Now().Unix())
 			m.calculator.Calculate(newSession)
 			
-			// Update in active sessions
-			for i, s := range m.activeSessions {
-				if s.ID == sessionID {
-					m.activeSessions[i] = newSession
-					break
-				}
-			}
+			newSessions = append(newSessions, newSession)
 		}
+		
+		return newSessions
 	} else {
 		// No existing windows or window history, do full detection
 		util.LogInfo("No existing windows found, performing full detection")
-		m.fullDetectSessions()
+		return m.fullDetectSessionsAtomic()
 	}
 }
 
-// fullDetectSessions performs full session detection (renamed from detectSessions)
-func (m *Manager) fullDetectSessions() {
+// incrementalDetectSessions performs incremental session detection for changed files
+func (m *Manager) incrementalDetectSessions(changedFiles []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	m.activeSessions = m.incrementalDetectSessionsAtomic(changedFiles)
+}
+
+// fullDetectSessionsAtomic performs full session detection and returns new sessions without modifying state
+func (m *Manager) fullDetectSessionsAtomic() []*Session {
 	// First, load historical limit windows from the past 1 day
 	// This ensures we have the most accurate windows from limit messages
 	if m.detector.windowHistory != nil {
@@ -536,7 +573,44 @@ func (m *Manager) fullDetectSessions() {
 		GlobalTimeline:   globalTimeline,
 		CachedWindowInfo: cachedWindowInfo,
 	}
-	m.activeSessions = m.detector.DetectSessionsWithLimits(input)
+	newSessions := m.detector.DetectSessionsWithLimits(input)
+
+	// Calculate metrics for each session and store window info
+	for _, session := range newSessions {
+		m.calculator.Calculate(session)
+
+		// Store window detection info back to cache if detected
+		// Only cache windows that are not too far in the future (max session duration ahead)
+		currentTime := time.Now().Unix()
+		maxFutureTime := currentTime + constants.MaxFutureWindowSeconds
+
+		if session.IsWindowDetected && session.WindowStartTime != nil {
+			// Check if window end time is not too far in the future
+			windowEndTime := *session.WindowStartTime + constants.SessionDurationSeconds
+			if windowEndTime <= maxFutureTime {
+				windowInfo := &WindowDetectionInfo{
+					WindowStartTime:  session.WindowStartTime,
+					IsWindowDetected: session.IsWindowDetected,
+					WindowSource:     session.WindowSource,
+					DetectedAt:       currentTime,
+					FirstEntryTime:   session.FirstEntryTime,
+				}
+				m.memoryCache.UpdateWindowInfo(session.ID, windowInfo)
+			} else {
+				util.LogWarn(fmt.Sprintf("Skipping cache for future window: %s (ends at %s, max allowed %s)",
+					session.ID,
+					time.Unix(windowEndTime, 0).Format("2006-01-02 15:04:05"),
+					time.Unix(maxFutureTime, 0).Format("2006-01-02 15:04:05")))
+			}
+		}
+	}
+
+	return newSessions
+}
+
+// fullDetectSessions performs full session detection (renamed from detectSessions)
+func (m *Manager) fullDetectSessions() {
+	m.activeSessions = m.fullDetectSessionsAtomic()
 }
 
 func (m *Manager) detectSessions() {
@@ -610,15 +684,34 @@ func (m *Manager) detectSessions() {
 
 func (m *Manager) updateDisplay() {
 	m.mu.RLock()
-	sessions := make([]*Session, len(m.activeSessions))
-	copy(sessions, m.activeSessions)
+	isLoading := m.isLoading
+	loadingMessage := m.loadingMessage
+	
+	var sessions []*Session
+	if !isLoading && len(m.activeSessions) > 0 {
+		// Use current active sessions if available and not loading
+		sessions = make([]*Session, len(m.activeSessions))
+		copy(sessions, m.activeSessions)
+	} else if isLoading && len(m.previousSessions) > 0 {
+		// Use previous valid sessions during loading to avoid empty display
+		sessions = make([]*Session, len(m.previousSessions))
+		copy(sessions, m.previousSessions)
+	} else {
+		// No sessions available
+		sessions = make([]*Session, 0)
+	}
 	m.mu.RUnlock()
 
 	// Apply sorting
 	m.sorter.Sort(sessions)
 
+	// Update state with loading information
+	state := m.state
+	state.IsLoading = isLoading
+	state.LoadingMessage = loadingMessage
+
 	// Pass state to display
-	m.display.RenderWithState(sessions, m.state)
+	m.display.RenderWithState(sessions, state)
 }
 
 func (m *Manager) handleKeyboard(event KeyEvent) bool {
@@ -689,11 +782,32 @@ func (m *Manager) handleKeyboard(event KeyEvent) bool {
 	return false
 }
 
-func (m *Manager) refreshData() {
+// refreshDataAtomic performs atomic data refresh with double buffering
+func (m *Manager) refreshDataAtomic() {
+	// Acquire refresh mutex to prevent concurrent refreshes
+	m.refreshMutex.Lock()
+	defer m.refreshMutex.Unlock()
+
+	// Set loading state
+	m.mu.Lock()
+	m.isLoading = true
+	m.loadingMessage = "Refreshing data..."
+	// Store previous sessions as backup
+	if len(m.activeSessions) > 0 {
+		m.previousSessions = make([]*Session, len(m.activeSessions))
+		copy(m.previousSessions, m.activeSessions)
+	}
+	m.mu.Unlock()
+
 	// Rescan recent files and update
 	files, err := m.scanRecentFiles()
 	if err != nil {
 		util.LogError(fmt.Sprintf("Failed to scan recent files: %v", err))
+		// Reset loading state on error but keep previous data
+		m.mu.Lock()
+		m.isLoading = false
+		m.loadingMessage = ""
+		m.mu.Unlock()
 		return
 	}
 
@@ -702,12 +816,29 @@ func (m *Manager) refreshData() {
 	
 	m.loadFiles(files)
 	
-	// Use incremental detection if enabled and we have changed files
+	// Prepare new sessions (double buffering)
+	var newSessions []*Session
 	if m.sessionConfig.EnableIncrementalDetection && len(changedFiles) > 0 {
-		m.incrementalDetectSessions(changedFiles)
+		newSessions = m.incrementalDetectSessionsAtomic(changedFiles)
 	} else {
-		m.detectSessions()
+		newSessions = m.fullDetectSessionsAtomic()
 	}
+
+	// Atomically replace sessions
+	m.mu.Lock()
+	if len(newSessions) > 0 {
+		m.activeSessions = newSessions
+		m.lastDataUpdate = time.Now().Unix()
+	}
+	// Clear loading state
+	m.isLoading = false
+	m.loadingMessage = ""
+	m.mu.Unlock()
+}
+
+// Legacy method for backward compatibility
+func (m *Manager) refreshData() {
+	m.refreshDataAtomic()
 }
 
 // identifyChangedFiles returns files that are new or have changed since last load
@@ -738,6 +869,12 @@ func (m *Manager) clearWindowHistory() {
 		Title:   "Clear Window History",
 		Message: "This will clear all learned window boundaries (preserving limit messages). Continue?",
 		OnConfirm: func() {
+			// Set loading state for window history clearing
+			m.mu.Lock()
+			m.isLoading = true
+			m.loadingMessage = "Clearing window history..."
+			m.mu.Unlock()
+
 			// Get history file path
 			homeDir, _ := os.UserHomeDir()
 			historyPath := filepath.Join(homeDir, ".go-claude-monitor", "history", "window_history.json")
@@ -769,13 +906,19 @@ func (m *Manager) clearWindowHistory() {
 				if err := newHistory.Save(); err != nil {
 					util.LogError(fmt.Sprintf("Failed to save cleared window history: %v", err))
 					m.state.StatusMessage = "Failed to clear window history"
+					
+					// Clear loading state on error
+					m.mu.Lock()
+					m.isLoading = false
+					m.loadingMessage = ""
+					m.mu.Unlock()
 				} else {
 					// Replace the detector's window history
 					m.detector.windowHistory = newHistory
 					util.LogInfo("Window history cleared successfully, limit messages preserved")
 
-					// Reload data
-					m.refreshData()
+					// Reload data atomically (this will clear loading state when done)
+					m.refreshDataAtomic()
 				}
 			} else {
 				// Fallback: remove the file if detector is not initialized
@@ -785,6 +928,12 @@ func (m *Manager) clearWindowHistory() {
 				} else {
 					util.LogInfo("Window history cleared (no detector available)")
 				}
+				
+				// Clear loading state
+				m.mu.Lock()
+				m.isLoading = false
+				m.loadingMessage = ""
+				m.mu.Unlock()
 			}
 
 			// Clear confirm dialog
