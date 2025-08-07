@@ -100,6 +100,8 @@ func (mc *MemoryCache) GetCachedWindowInfo() map[string]*WindowDetectionInfo {
 }
 
 // GetRecentDataWithLogs returns both hourly data and raw logs for session detection
+// TEST-ONLY: This method is used exclusively in tests for verifying cache behavior.
+// Production code accesses cache data through different methods.
 func (mc *MemoryCache) GetRecentDataWithLogs(duration int64) ([]aggregator.HourlyData, []model.ConversationLog) {
 	mc.mu.RLock()
 	defer mc.mu.RUnlock()

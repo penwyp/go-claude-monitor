@@ -313,6 +313,9 @@ func (o *Orchestrator) handleKeyboard(event interaction.KeyEvent) bool {
 		case 'c', 'C':
 			// Clear window history
 			o.clearWindowHistory()
+		case 'x', 'X':
+			// Clear cache
+			o.clearCache()
 		case 'p', 'P':
 			// Pause/unpause
 			o.stateManager.UpdateInteractionState(func(s *model.InteractionState) {
@@ -377,6 +380,45 @@ func (o *Orchestrator) clearWindowHistory() {
 	})
 }
 
+// clearCache clears memory cache with confirmation
+func (o *Orchestrator) clearCache() {
+	o.stateManager.UpdateInteractionState(func(s *model.InteractionState) {
+		s.ConfirmDialog = &model.ConfirmDialog{
+			Title:   "Clear Memory Cache",
+			Message: "This will clear all cached session data and force a full reload. Continue?",
+			OnConfirm: func() {
+				o.stateManager.SetLoadingState(true, "Clearing memory cache...")
+				
+				// Clear memory cache through data loader
+				if memoryCache := o.dataLoader.GetMemoryCache(); memoryCache != nil {
+					memoryCache.Clear()
+				}
+				
+				// Force a full refresh after clearing cache
+				go func() {
+					// Small delay to show loading message
+					time.Sleep(100 * time.Millisecond)
+					sessions, err := o.refreshCtrl.FullDetect()
+					if err != nil {
+						util.LogError(fmt.Sprintf("Failed to refresh after cache clear: %v", err))
+						o.stateManager.SetLoadingState(false, "")
+						return
+					}
+					
+					// Update state with new sessions
+					o.stateManager.SetSessions(sessions)
+					o.stateManager.SetLoadingState(false, "")
+					
+					util.LogInfo("Memory cache cleared and data refreshed")
+				}()
+			},
+			OnCancel: func() {
+				// Clear the dialog
+			},
+		}
+	})
+}
+
 // persistCache persists dirty cache entries and window history
 func (o *Orchestrator) persistCache() {
 	// Persist dirty cache entries
@@ -432,6 +474,11 @@ func (o *Orchestrator) handleFileChange(event model.FileEvent) {
 
 // Close cleans up all resources
 func (o *Orchestrator) Close() error {
+	// Save dirty cache entries before closing
+	if err := o.dataLoader.PersistDirtyEntries(); err != nil {
+		util.LogError(fmt.Sprintf("Failed to persist dirty cache entries on close: %v", err))
+	}
+	
 	// Save window history before closing
 	if o.detector.GetWindowHistory() != nil {
 		if err := o.detector.GetWindowHistory().Save(); err != nil {

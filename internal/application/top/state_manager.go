@@ -36,16 +36,6 @@ func NewStateManager() *StateManager {
 	}
 }
 
-// GetSessions returns current active sessions (thread-safe)
-func (sm *StateManager) GetSessions() []*session.Session {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	
-	// Return a copy to prevent external modification
-	sessions := make([]*session.Session, len(sm.activeSessions))
-	copy(sessions, sm.activeSessions)
-	return sessions
-}
 
 // SetSessions updates active sessions (thread-safe)
 func (sm *StateManager) SetSessions(sessions []*session.Session) {
@@ -62,23 +52,6 @@ func (sm *StateManager) SetSessions(sessions []*session.Session) {
 	sm.lastDataUpdate = time.Now().Unix()
 }
 
-// GetPreviousSessions returns previous sessions (for loading state)
-func (sm *StateManager) GetPreviousSessions() []*session.Session {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	
-	sessions := make([]*session.Session, len(sm.previousSessions))
-	copy(sessions, sm.previousSessions)
-	return sessions
-}
-
-// SetPreviousSessions stores previous sessions
-func (sm *StateManager) SetPreviousSessions(sessions []*session.Session) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	
-	sm.previousSessions = sessions
-}
 
 // GetLoadingState returns current loading state and message
 func (sm *StateManager) GetLoadingState() (bool, string) {
@@ -106,13 +79,6 @@ func (sm *StateManager) GetInteractionState() model.InteractionState {
 	return sm.interactionState
 }
 
-// SetInteractionState updates interaction state
-func (sm *StateManager) SetInteractionState(state model.InteractionState) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	
-	sm.interactionState = state
-}
 
 // UpdateInteractionState updates specific fields of interaction state
 func (sm *StateManager) UpdateInteractionState(updateFunc func(*model.InteractionState)) {
@@ -122,21 +88,6 @@ func (sm *StateManager) UpdateInteractionState(updateFunc func(*model.Interactio
 	updateFunc(&sm.interactionState)
 }
 
-// GetLastDataUpdate returns timestamp of last successful data update
-func (sm *StateManager) GetLastDataUpdate() int64 {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	
-	return sm.lastDataUpdate
-}
-
-// SetLastDataUpdate sets timestamp of last successful data update
-func (sm *StateManager) SetLastDataUpdate(timestamp int64) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	
-	sm.lastDataUpdate = timestamp
-}
 
 // GetSessionsForDisplay returns sessions appropriate for display based on loading state
 func (sm *StateManager) GetSessionsForDisplay() []*session.Session {

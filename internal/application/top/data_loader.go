@@ -303,10 +303,6 @@ func (dl *DataLoader) IdentifyChangedFiles(files []string) []string {
 	return changedFiles
 }
 
-// GetDirtyEntries returns cache entries that need persistence
-func (dl *DataLoader) GetDirtyEntries() map[string]*aggregator.AggregatedData {
-	return dl.memoryCache.GetDirtyEntries()
-}
 
 // PersistDirtyEntries persists dirty cache entries to file cache
 func (dl *DataLoader) PersistDirtyEntries() error {

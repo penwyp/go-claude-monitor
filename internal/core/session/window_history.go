@@ -370,22 +370,6 @@ func (m *WindowHistoryManager) GetRecentWindows(duration time.Duration) []Window
 	return recent
 }
 
-// GetRecentAccountWindows returns account-level windows from the specified duration
-func (m *WindowHistoryManager) GetRecentAccountWindows(duration time.Duration) []WindowRecord {
-	m.history.mu.RLock()
-	defer m.history.mu.RUnlock()
-
-	cutoff := time.Now().Unix() - int64(duration.Seconds())
-	var recent []WindowRecord
-	
-	for _, record := range m.history.Windows {
-		if record.IsAccountLevel && record.EndTime > cutoff {
-			recent = append(recent, record)
-		}
-	}
-	
-	return recent
-}
 
 // UpdateFromLimitMessage updates window history based on a limit message
 func (m *WindowHistoryManager) UpdateFromLimitMessage(resetTime int64, messageTime int64, limitMessage string) {

@@ -4,7 +4,6 @@ import (
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
 	"github.com/penwyp/go-claude-monitor/internal/core/session"
 	"github.com/penwyp/go-claude-monitor/internal/core/timeline"
-	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
 	"github.com/penwyp/go-claude-monitor/internal/presentation/interaction"
 )
 
@@ -30,8 +29,6 @@ type DataSource interface {
 	UpdateWindowInfo(sessionID string, info *session.WindowDetectionInfo)
 	// IdentifyChangedFiles returns files that have changed since last load
 	IdentifyChangedFiles(files []string) []string
-	// GetDirtyEntries returns cache entries that need persistence
-	GetDirtyEntries() map[string]*aggregator.AggregatedData
 }
 
 // DisplayController handles terminal display operations
@@ -58,26 +55,14 @@ type RefreshStrategy interface {
 
 // StateStore manages application state
 type StateStore interface {
-	// GetSessions returns current active sessions (thread-safe)
-	GetSessions() []*session.Session
 	// SetSessions updates active sessions (thread-safe)
 	SetSessions(sessions []*session.Session)
-	// GetPreviousSessions returns previous sessions (for loading state)
-	GetPreviousSessions() []*session.Session
-	// SetPreviousSessions stores previous sessions
-	SetPreviousSessions(sessions []*session.Session)
 	// GetLoadingState returns current loading state and message
 	GetLoadingState() (bool, string)
 	// SetLoadingState updates loading state and message
 	SetLoadingState(isLoading bool, message string)
 	// GetInteractionState returns current interaction state
 	GetInteractionState() model.InteractionState
-	// SetInteractionState updates interaction state
-	SetInteractionState(state model.InteractionState)
-	// GetLastDataUpdate returns timestamp of last successful data update
-	GetLastDataUpdate() int64
-	// SetLastDataUpdate sets timestamp of last successful data update
-	SetLastDataUpdate(timestamp int64)
 }
 
 // InputHandler processes keyboard and other input events

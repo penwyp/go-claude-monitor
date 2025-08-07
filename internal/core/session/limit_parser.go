@@ -274,6 +274,8 @@ func (p *LimitParser) parseTextContent(text string, log model.ConversationLog, m
 }
 
 // DetectWindowFromLimits analyzes limit messages to determine window start times
+// TEST-ONLY: This method is used exclusively in tests for verifying limit detection logic.
+// Production code uses the unified timeline approach in detector.go collectWindowCandidates.
 func (p *LimitParser) DetectWindowFromLimits(limits []LimitInfo) (windowStart *int64, source string) {
 	util.LogDebug(fmt.Sprintf("DetectWindowFromLimits: Analyzing %d limits", len(limits)))
 
