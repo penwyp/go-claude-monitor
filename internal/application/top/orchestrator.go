@@ -57,7 +57,7 @@ func NewOrchestrator(config *TopConfig) (*Orchestrator, error) {
 	planLimits := pricing.GetPlanWithDefault(config.Plan, config.CustomLimitTokens)
 	
 	// Create session detector with aggregator from data loader
-	detector := session.NewSessionDetectorWithAggregator(nil, config.Timezone, config.CacheDir)
+	detector := session.NewSessionDetectorWithAggregator(dataLoader.GetAggregator(), config.Timezone, config.CacheDir)
 	
 	// Create metrics calculator
 	calculator := session.NewMetricsCalculator(planLimits)

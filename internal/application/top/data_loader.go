@@ -322,6 +322,11 @@ func (dl *DataLoader) GetMemoryCache() *cache.MemoryCache {
 	return dl.memoryCache
 }
 
+// GetAggregator returns the aggregator instance for cost calculation
+func (dl *DataLoader) GetAggregator() *aggregator.Aggregator {
+	return dl.aggregator
+}
+
 // extractSessionId extracts the session ID from a file path
 func extractSessionId(filePath string) string {
 	filename := filepath.Base(filePath)
