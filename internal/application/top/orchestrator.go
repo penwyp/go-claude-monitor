@@ -62,11 +62,11 @@ func NewOrchestrator(config *TopConfig) (*Orchestrator, error) {
 	// Create metrics calculator
 	calculator := session.NewMetricsCalculator(planLimits)
 	
-	// Create refresh controller
-	refreshCtrl := NewRefreshController(dataLoader, detector, calculator)
-	
 	// Create state manager
 	stateManager := NewStateManager()
+	
+	// Create refresh controller
+	refreshCtrl := NewRefreshController(dataLoader, detector, calculator, stateManager)
 	
 	// Create display
 	displayConfig := &display.DisplayConfig{
@@ -458,11 +458,11 @@ func (o *Orchestrator) handleFileChange(event model.FileEvent) {
 	util.LogDebug(fmt.Sprintf("File changed: %s (%s)", event.Path, event.Operation))
 	
 	// Parse and update the changed file
-	sessionId := extractSessionId(event.Path)
 	o.dataLoader.LoadFiles([]string{event.Path})
 	
-	// Perform incremental detection
-	sessions, err := o.refreshCtrl.IncrementalDetect([]string{sessionId})
+	// Perform full detection (matching old behavior where detectSessions always did full detection)
+	// Note: The old code's handleFileChange always called detectSessions() which did full detection
+	sessions, err := o.refreshCtrl.FullDetect()
 	if err != nil {
 		util.LogError(fmt.Sprintf("Failed to handle file change: %v", err))
 		return

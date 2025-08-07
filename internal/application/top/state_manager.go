@@ -89,6 +89,16 @@ func (sm *StateManager) UpdateInteractionState(updateFunc func(*model.Interactio
 }
 
 
+// GetCurrentSessions returns a copy of current active sessions (thread-safe)
+func (sm *StateManager) GetCurrentSessions() []*session.Session {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	
+	sessions := make([]*session.Session, len(sm.activeSessions))
+	copy(sessions, sm.activeSessions)
+	return sessions
+}
+
 // GetSessionsForDisplay returns sessions appropriate for display based on loading state
 func (sm *StateManager) GetSessionsForDisplay() []*session.Session {
 	sm.mu.RLock()

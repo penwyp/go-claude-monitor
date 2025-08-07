@@ -96,7 +96,7 @@ func (d *SessionDetector) detectSessionsFromGlobalTimeline(input SessionDetectio
 		logsInWindow := 0
 		for _, tl := range input.GlobalTimeline {
 			if tl.Timestamp >= window.StartTime && tl.Timestamp < window.EndTime {
-				d.addLogToSession(session, tl)
+				d.AddLogToSession(session, tl)
 				logsInWindow++
 			}
 		}
@@ -119,8 +119,8 @@ func (d *SessionDetector) detectSessionsFromGlobalTimeline(input SessionDetectio
 	
 	// Finalize and calculate metrics for all sessions
 	for _, session := range sessions {
-		d.finalizeSession(session)
-		d.calculateMetrics(session, nowTimestamp)
+		d.FinalizeSession(session)
+		d.CalculateMetrics(session, nowTimestamp)
 	}
 	
 	// Insert gap sessions and mark active
@@ -386,7 +386,8 @@ func (d *SessionDetector) createSessionForWindow(window WindowCandidate, default
 // Removed createNewSessionWithWindow - replaced by createSessionForWindow
 
 // addLogToSession adds a timestamped log to a session and updates its statistics
-func (d *SessionDetector) addLogToSession(session *Session, tl timeline.TimestampedLog) {
+// AddLogToSession adds a log entry to a session
+func (d *SessionDetector) AddLogToSession(session *Session, tl timeline.TimestampedLog) {
 	// Get or create project stats
 	projectStats, exists := session.Projects[tl.ProjectName]
 	if !exists {
@@ -475,7 +476,8 @@ func (d *SessionDetector) addLogToSession(session *Session, tl timeline.Timestam
 
 
 
-func (d *SessionDetector) calculateMetrics(session *Session, nowTimestamp int64) {
+// CalculateMetrics calculates metrics for a session
+func (d *SessionDetector) CalculateMetrics(session *Session, nowTimestamp int64) {
 	// For burn rate calculation, prefer using WindowStartTime for detected windows
 	// as it's more stable than FirstEntryTime which can vary between data loads
 	startTimeForCalc := session.StartTime
@@ -633,7 +635,8 @@ func (d *SessionDetector) markActiveSessions(sessions []*Session, nowTimestamp i
 
 // finalizeSession sets the actual end time and calculates totals
 // This aligns with Python's _finalize_block
-func (d *SessionDetector) finalizeSession(session *Session) {
+// FinalizeSession finalizes session data after all logs have been added
+func (d *SessionDetector) FinalizeSession(session *Session) {
 	// ActualEndTime is already set in addTimelineEntryToSession
 	// Update sent_messages_count is already done in addTimelineEntryToSession
 	
@@ -911,7 +914,7 @@ func (d *SessionDetector) createActiveSessionWindow(windowStart, windowEnd, nowT
 	}
 	
 	// Calculate initial metrics
-	d.calculateMetrics(activeSession, nowTimestamp)
+	d.CalculateMetrics(activeSession, nowTimestamp)
 	
 	return activeSession
 }

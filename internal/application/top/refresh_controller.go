@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/penwyp/go-claude-monitor/internal/core/constants"
+	"github.com/penwyp/go-claude-monitor/internal/core/model"
 	"github.com/penwyp/go-claude-monitor/internal/core/session"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 )
@@ -15,6 +16,7 @@ type RefreshController struct {
 	dataLoader    *DataLoader
 	detector      *session.SessionDetector
 	calculator    *session.MetricsCalculator
+	stateManager  *StateManager
 	sessionConfig session.SessionConfig
 	
 	mu           sync.RWMutex
@@ -22,11 +24,12 @@ type RefreshController struct {
 }
 
 // NewRefreshController creates a new RefreshController instance
-func NewRefreshController(dataLoader *DataLoader, detector *session.SessionDetector, calculator *session.MetricsCalculator) *RefreshController {
+func NewRefreshController(dataLoader *DataLoader, detector *session.SessionDetector, calculator *session.MetricsCalculator, stateManager *StateManager) *RefreshController {
 	return &RefreshController{
 		dataLoader:    dataLoader,
 		detector:      detector,
 		calculator:    calculator,
+		stateManager:  stateManager,
 		sessionConfig: session.GetSessionConfig(),
 	}
 }
@@ -73,6 +76,9 @@ func (rc *RefreshController) IncrementalDetect(changedFiles []string) ([]*sessio
 		return rc.FullDetect()
 	}
 
+	// Get current sessions from state manager
+	currentSessions := rc.stateManager.GetCurrentSessions()
+	
 	// Get current memory cache
 	memCache := rc.dataLoader.GetMemoryCache()
 	
@@ -97,14 +103,70 @@ func (rc *RefreshController) IncrementalDetect(changedFiles []string) ([]*sessio
 		}
 	}
 
-	// Get updated global timeline
-	_ = rc.dataLoader.GetGlobalTimeline(6 * 3600)
-	
 	// Check if we have existing windows that cover this time range
-	// For now, just do full detection if we have changes
-	// TODO: Implement more sophisticated incremental detection
-	util.LogInfo(fmt.Sprintf("Incremental update for %d changed files", len(changedFiles)))
-	return rc.FullDetect()
+	existingWindows := make(map[string]*session.Session)
+	for _, sess := range currentSessions {
+		if sess.StartTime <= maxTime && sess.EndTime >= minTime {
+			existingWindows[sess.ID] = sess
+		}
+	}
+
+	if len(existingWindows) > 0 && rc.detector.GetWindowHistory() != nil {
+		// We have existing windows, just update the statistics
+		util.LogInfo(fmt.Sprintf("Incremental update for %d existing windows", len(existingWindows)))
+		
+		// Get updated global timeline
+		globalTimeline := rc.dataLoader.GetGlobalTimeline(6 * 3600)
+		
+		// Prepare new session list
+		newSessions := make([]*session.Session, 0, len(currentSessions))
+		
+		// Recalculate only affected sessions
+		for _, oldSession := range currentSessions {
+			if _, isAffected := existingWindows[oldSession.ID]; !isAffected {
+				// Session not affected, keep as is
+				newSessions = append(newSessions, oldSession)
+				continue
+			}
+			
+			// Create new session with same window
+			newSession := &session.Session{
+				ID:                oldSession.ID,
+				StartTime:         oldSession.StartTime,
+				EndTime:           oldSession.EndTime,
+				Projects:          make(map[string]*session.ProjectStats),
+				ModelDistribution: make(map[string]*model.ModelStats),
+				PerModelStats:     make(map[string]map[string]interface{}),
+				HourlyMetrics:     make([]*model.HourlyMetric, 0),
+				LimitMessages:     make([]map[string]interface{}, 0),
+				ProjectionData:    make(map[string]interface{}),
+				WindowStartTime:   oldSession.WindowStartTime,
+				IsWindowDetected:  oldSession.IsWindowDetected,
+				WindowSource:      oldSession.WindowSource,
+				ResetTime:         oldSession.ResetTime,
+			}
+			
+			// Add logs that belong to this window
+			for _, tl := range globalTimeline {
+				if tl.Timestamp >= newSession.StartTime && tl.Timestamp < newSession.EndTime {
+					rc.detector.AddLogToSession(newSession, tl)
+				}
+			}
+			
+			// Finalize and calculate metrics
+			rc.detector.FinalizeSession(newSession)
+			rc.detector.CalculateMetrics(newSession, time.Now().Unix())
+			rc.calculator.Calculate(newSession)
+			
+			newSessions = append(newSessions, newSession)
+		}
+		
+		return newSessions, nil
+	} else {
+		// No existing windows or window history, do full detection
+		util.LogInfo("No existing windows found, performing full detection")
+		return rc.FullDetect()
+	}
 }
 
 // FullDetect performs full session detection
