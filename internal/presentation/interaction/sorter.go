@@ -2,8 +2,15 @@ package interaction
 
 import (
 	"sort"
-	"github.com/penwyp/go-claude-monitor/internal/core/session"
 )
+
+// Session struct temporarily duplicated to avoid circular import
+// TODO: Move to model package
+type Session struct {
+	StartTime   int64
+	TotalCost   float64
+	TotalTokens int
+}
 
 // SortField represents the field to sort sessions by
 type SortField int
@@ -37,7 +44,7 @@ func NewSessionSorter() *SessionSorter {
 }
 
 // Sort sorts the sessions based on current settings
-func (s *SessionSorter) Sort(sessions []*session.Session) {
+func (s *SessionSorter) Sort(sessions []*Session) {
 	sort.Slice(sessions, func(i, j int) bool {
 		var less bool
 

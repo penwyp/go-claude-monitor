@@ -1,4 +1,4 @@
-package session
+package interaction
 
 import (
 	"testing"
@@ -50,22 +50,23 @@ func TestKeyboardReader(t *testing.T) {
 func TestSessionSorter(t *testing.T) {
 	// Create test sessions
 	now := time.Now()
+	session1Time := now.Add(-2 * time.Hour).Unix()
+	session2Time := now.Add(-1 * time.Hour).Unix() // Most recent
+	session3Time := now.Add(-3 * time.Hour).Unix() // Oldest
+	
 	sessions := []*Session{
 		{
-			ID:          "session1",
-			StartTime:   now.Add(-2 * time.Hour).Unix(),
+			StartTime:   session1Time,
 			TotalTokens: 1000,
 			TotalCost:   10.0,
 		},
 		{
-			ID:          "session2",
-			StartTime:   now.Add(-1 * time.Hour).Unix(),
+			StartTime:   session2Time,
 			TotalTokens: 2000,
 			TotalCost:   5.0,
 		},
 		{
-			ID:          "session3",
-			StartTime:   now.Add(-3 * time.Hour).Unix(),
+			StartTime:   session3Time,
 			TotalTokens: 500,
 			TotalCost:   15.0,
 		},
@@ -75,7 +76,7 @@ func TestSessionSorter(t *testing.T) {
 
 	// Test time sorting (default)
 	sorter.Sort(sessions)
-	if sessions[0].ID != "session2" {
-		t.Errorf("Expected session2 first for time sort descending, got %s", sessions[0].ID)
+	if sessions[0].StartTime != session2Time {
+		t.Errorf("Expected most recent session first for time sort descending, got %d", sessions[0].StartTime)
 	}
 }

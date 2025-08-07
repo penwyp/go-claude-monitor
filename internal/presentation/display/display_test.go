@@ -1,4 +1,4 @@
-package session
+package display
 
 import (
 	"bytes"
@@ -17,11 +17,11 @@ import (
 func TestNewTerminalDisplay(t *testing.T) {
 	tests := []struct {
 		name   string
-		config *TopConfig
+		config *DisplayConfig
 	}{
 		{
 			name: "default_config",
-			config: &TopConfig{
+			config: &DisplayConfig{
 				Plan:       "pro",
 				Timezone:   "UTC",
 				TimeFormat: "24h",
@@ -29,7 +29,7 @@ func TestNewTerminalDisplay(t *testing.T) {
 		},
 		{
 			name: "minimal_config",
-			config: &TopConfig{},
+			config: &DisplayConfig{},
 		},
 		{
 			name:   "nil_config",
@@ -54,7 +54,7 @@ func TestNewTerminalDisplay(t *testing.T) {
 }
 
 func TestTerminalDisplayScreenManagement(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -114,7 +114,7 @@ func TestTerminalDisplayScreenManagement(t *testing.T) {
 }
 
 func TestCalculateAggregatedMetrics(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -122,7 +122,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 	display := NewTerminalDisplay(config)
 	
 	t.Run("empty_sessions", func(t *testing.T) {
-		aggregated := display.calculateAggregatedMetrics([]*Session{})
+		aggregated := display.CalculateAggregatedMetrics([]*Session{})
 		
 		assert.NotNil(t, aggregated)
 		assert.Equal(t, 0, aggregated.TotalSessions)
@@ -165,7 +165,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 			},
 		}
 		
-		aggregated := display.calculateAggregatedMetrics(sessions)
+		aggregated := display.CalculateAggregatedMetrics(sessions)
 		
 		assert.Equal(t, 1, aggregated.TotalSessions)
 		assert.Equal(t, 1, aggregated.ActiveSessions)
@@ -227,7 +227,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 			},
 		}
 		
-		aggregated := display.calculateAggregatedMetrics(sessions)
+		aggregated := display.CalculateAggregatedMetrics(sessions)
 		
 		assert.Equal(t, 2, aggregated.TotalSessions)
 		assert.Equal(t, 2, aggregated.ActiveSessions)
@@ -258,7 +258,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 			},
 		}
 		
-		aggregated := display.calculateAggregatedMetrics(sessions)
+		aggregated := display.CalculateAggregatedMetrics(sessions)
 		assert.True(t, aggregated.LimitExceeded)
 		assert.Equal(t, "COST LIMIT EXCEEDED", aggregated.LimitExceededReason)
 		
@@ -266,7 +266,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 		sessions[0].TotalCost = 5.0 // Within cost limit
 		sessions[0].TotalTokens = 5000000 // Exceeds pro plan token limit of 4,000,000
 		
-		aggregated = display.calculateAggregatedMetrics(sessions)
+		aggregated = display.CalculateAggregatedMetrics(sessions)
 		assert.True(t, aggregated.LimitExceeded)
 		assert.Equal(t, "TOKEN LIMIT EXCEEDED", aggregated.LimitExceededReason)
 		
@@ -274,7 +274,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 		sessions[0].TotalTokens = 1000 // Within token limit
 		sessions[0].MessageCount = 50 // Exceeds message limit of 40
 		
-		aggregated = display.calculateAggregatedMetrics(sessions)
+		aggregated = display.CalculateAggregatedMetrics(sessions)
 		assert.True(t, aggregated.LimitExceeded)
 		assert.Equal(t, "MESSAGE LIMIT EXCEEDED", aggregated.LimitExceededReason)
 	})
@@ -294,7 +294,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 			},
 		}
 		
-		aggregated := display.calculateAggregatedMetrics(sessions)
+		aggregated := display.CalculateAggregatedMetrics(sessions)
 		
 		// Should calculate predicted end time based on cost burn rate
 		expectedEndTime := currentTime + 60*60 // 60 minutes from now
@@ -303,7 +303,7 @@ func TestCalculateAggregatedMetrics(t *testing.T) {
 }
 
 func TestRenderWithState(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:       "pro",
 		Timezone:   "UTC",
 		TimeFormat: "24h",
@@ -394,7 +394,7 @@ func TestRenderWithState(t *testing.T) {
 }
 
 func TestRenderHelp(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -437,7 +437,7 @@ func TestRenderHelp(t *testing.T) {
 }
 
 func TestRenderConfirmDialog(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -481,7 +481,7 @@ func TestRenderConfirmDialog(t *testing.T) {
 }
 
 func TestRenderStatusMessage(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -568,7 +568,7 @@ func TestWrapText(t *testing.T) {
 }
 
 func TestSmartRender(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -620,7 +620,7 @@ func TestSmartRender(t *testing.T) {
 }
 
 func TestDisplayStateTransitions(t *testing.T) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:       "pro",
 		Timezone:   "UTC",
 		TimeFormat: "24h",
@@ -658,7 +658,7 @@ func TestDisplayStateTransitions(t *testing.T) {
 
 // Benchmark tests for performance
 func BenchmarkCalculateAggregatedMetrics(b *testing.B) {
-	config := &TopConfig{
+	config := &DisplayConfig{
 		Plan:     "pro",
 		Timezone: "UTC",
 	}
@@ -687,7 +687,7 @@ func BenchmarkCalculateAggregatedMetrics(b *testing.B) {
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		display.calculateAggregatedMetrics(sessions)
+		display.CalculateAggregatedMetrics(sessions)
 	}
 }
 
@@ -704,17 +704,17 @@ func BenchmarkWrapText(b *testing.B) {
 // Test error conditions and edge cases
 func TestDisplayEdgeCases(t *testing.T) {
 	t.Run("nil_sessions", func(t *testing.T) {
-		config := &TopConfig{Plan: "pro", Timezone: "UTC"}
+		config := &DisplayConfig{Plan: "pro", Timezone: "UTC"}
 		display := NewTerminalDisplay(config)
 		
 		// Should not panic with nil sessions
-		aggregated := display.calculateAggregatedMetrics(nil)
+		aggregated := display.CalculateAggregatedMetrics(nil)
 		assert.NotNil(t, aggregated)
 		assert.Equal(t, 0, aggregated.TotalSessions)
 	})
 	
 	t.Run("sessions_with_nil_model_distribution", func(t *testing.T) {
-		config := &TopConfig{Plan: "pro", Timezone: "UTC"}
+		config := &DisplayConfig{Plan: "pro", Timezone: "UTC"}
 		display := NewTerminalDisplay(config)
 		
 		sessions := []*Session{
@@ -728,13 +728,13 @@ func TestDisplayEdgeCases(t *testing.T) {
 		}
 		
 		// Should not panic
-		aggregated := display.calculateAggregatedMetrics(sessions)
+		aggregated := display.CalculateAggregatedMetrics(sessions)
 		assert.NotNil(t, aggregated)
 		assert.NotNil(t, aggregated.ModelDistribution)
 	})
 	
 	t.Run("very_long_dialog_message", func(t *testing.T) {
-		config := &TopConfig{Plan: "pro", Timezone: "UTC"}
+		config := &DisplayConfig{Plan: "pro", Timezone: "UTC"}
 		display := NewTerminalDisplay(config)
 		display.EnterAlternateScreen()
 		

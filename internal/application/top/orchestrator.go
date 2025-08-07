@@ -222,7 +222,8 @@ func (o *Orchestrator) LoadAndAnalyzeData() ([]*session.Session, error) {
 
 // GetAggregatedMetrics calculates aggregated metrics from sessions
 func (o *Orchestrator) GetAggregatedMetrics(sessions []*session.Session) *model.AggregatedMetrics {
-	return o.display.CalculateAggregatedMetrics(sessions)
+	displaySessions := convertSessionsForDisplay(sessions)
+	return o.display.CalculateAggregatedMetrics(displaySessions)
 }
 
 // updateDisplay updates the terminal display
@@ -230,8 +231,13 @@ func (o *Orchestrator) updateDisplay() {
 	isLoading, loadingMessage := o.stateManager.GetLoadingState()
 	sessions := o.stateManager.GetSessionsForDisplay()
 	
-	// Apply sorting
-	o.sorter.Sort(sessions)
+	// Convert for sorting
+	sortingSessions := convertSessionsForSorting(sessions)
+	o.sorter.Sort(sortingSessions)
+	applySortingToOriginal(sessions, sortingSessions)
+	
+	// Convert for display
+	displaySessions := convertSessionsForDisplay(sessions)
 	
 	// Update state with loading information
 	state := o.stateManager.GetInteractionState()
@@ -239,7 +245,7 @@ func (o *Orchestrator) updateDisplay() {
 	state.LoadingMessage = loadingMessage
 	
 	// Pass state to display
-	o.display.RenderWithState(sessions, state)
+	o.display.RenderWithState(displaySessions, state)
 }
 
 // refreshData performs data refresh

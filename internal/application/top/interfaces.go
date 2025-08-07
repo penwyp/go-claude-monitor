@@ -5,6 +5,7 @@ import (
 	"github.com/penwyp/go-claude-monitor/internal/core/session"
 	"github.com/penwyp/go-claude-monitor/internal/core/timeline"
 	"github.com/penwyp/go-claude-monitor/internal/data/aggregator"
+	"github.com/penwyp/go-claude-monitor/internal/presentation/interaction"
 )
 
 // SessionProvider handles session detection and calculation
@@ -82,7 +83,7 @@ type StateStore interface {
 // InputHandler processes keyboard and other input events
 type InputHandler interface {
 	// Events returns a channel of keyboard events
-	Events() <-chan session.KeyEvent
+	Events() <-chan interaction.KeyEvent
 	// Close cleans up input handler resources
 	Close() error
 }

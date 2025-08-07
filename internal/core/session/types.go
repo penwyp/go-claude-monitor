@@ -63,4 +63,11 @@ type Session struct {
 	LimitMessages    []map[string]interface{} // Limit messages detected in this session
 	ProjectionData   map[string]interface{}   // Projection data
 	BurnRateSnapshot *model.BurnRate          // Snapshot of burn rate
+	
+	// Compatibility fields
+	ProjectTokens    int
+	ProjectCost      float64
+	ModelsUsed       map[string]int
+	EntriesCount     int
+	WindowPriority   int
 }

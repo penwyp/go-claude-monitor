@@ -7,10 +7,52 @@ import (
 
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
 	"github.com/penwyp/go-claude-monitor/internal/core/pricing"
-	"github.com/penwyp/go-claude-monitor/internal/core/session"
 	"github.com/penwyp/go-claude-monitor/internal/presentation/layout"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 )
+
+// Session is temporarily duplicated here to avoid circular import
+// TODO: Move Session to model package to properly break the cycle
+type Session struct {
+	ID               string
+	StartTime        int64
+	StartHour        int64
+	EndTime          int64
+	ActualEndTime    *int64
+	IsActive         bool
+	IsGap            bool
+	ProjectName      string
+	SentMessageCount int
+	Projects         map[string]*ProjectStats
+	WindowStartTime  *int64
+	IsWindowDetected bool
+	WindowSource     string
+	FirstEntryTime   int64
+	TotalTokens      int
+	TotalCost        float64
+	ProjectTokens    int
+	ProjectCost      float64
+	ModelsUsed       map[string]int
+	EntriesCount     int
+	WindowPriority   int
+	
+	// Real-time metrics
+	ResetTime         int64
+	BurnRate          float64
+	ModelDistribution map[string]*model.ModelStats
+	MessageCount      int
+	CostPerHour       float64
+	CostPerMinute     float64
+	TokensPerMinute   float64
+	PredictedEndTime  int64
+}
+
+type ProjectStats struct {
+	TokenCount       int
+	Cost             float64
+	MessageCount     int
+	ModelsUsed       map[string]int
+}
 
 type TerminalDisplay struct {
 	config               *DisplayConfig
@@ -77,7 +119,7 @@ func (td *TerminalDisplay) ClearScreen() {
 	}
 }
 
-func (td *TerminalDisplay) RenderWithState(sessions []*session.Session, state model.InteractionState) {
+func (td *TerminalDisplay) RenderWithState(sessions []*Session, state model.InteractionState) {
 	// Check if we're transitioning from help to normal mode
 	helpTransition := td.previousShowHelp && !state.ShowHelp
 
@@ -153,7 +195,7 @@ func (td *TerminalDisplay) smartRender(strategy layout.LayoutStrategy, aggregate
 }
 
 // calculateAggregatedMetrics calculates combined metrics from all sessions
-func (td *TerminalDisplay) CalculateAggregatedMetrics(sessions []*session.Session) *model.AggregatedMetrics {
+func (td *TerminalDisplay) CalculateAggregatedMetrics(sessions []*Session) *model.AggregatedMetrics {
 	// Get plan limits from pricing package (always needed)
 	plan := pricing.GetPlan(td.config.Plan)
 	planLimits := pricing.Plan{
@@ -184,7 +226,7 @@ func (td *TerminalDisplay) CalculateAggregatedMetrics(sessions []*session.Sessio
 	hasActiveSession := false
 
 	// Find the first active session (earliest by start time)
-	var firstActiveSession *session.Session
+	var firstActiveSession *Session
 	for _, sess := range sessions {
 		if sess.IsActive {
 			if firstActiveSession == nil || sess.StartTime < firstActiveSession.StartTime {

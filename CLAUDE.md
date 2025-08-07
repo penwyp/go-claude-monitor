@@ -63,43 +63,60 @@ make release v0.0.1  # Creates git tag and pushes (triggers GitHub Actions)
     - `top.go`: Real-time monitoring interface with keyboard controls
     - `detect.go`: Hidden debug command for session detection analysis
 
-3. **Session Management** (`/internal/session`): Core logic for Claude session tracking
-    - Window detection: Identifies 5-hour session boundaries using limit messages, time gaps, or hour alignment
-    - Real-time tracking: Monitors active sessions, calculates burn rates, and projects costs
-    - Deduplication: Handles duplicate entries across multiple log files
-    - Caching: Memory-based cache for efficient data processing
-    - Timeline Builder: Constructs unified timelines from various data sources for account-level detection
-    - Window History: Persists and manages historical window information for improved detection accuracy
+3. **Application Layer** (`/internal/application/top`): Orchestrates top command functionality
+    - `orchestrator.go`: Main coordination logic for the real-time monitoring
+    - `data_loader.go`: Handles data loading and processing
+    - `refresh_controller.go`: Manages refresh and update logic
+    - `state_manager.go`: Application state management
+    - `config.go`: Configuration for top command
+    - `interfaces.go`: Defined interfaces for clean architecture
 
-4. **Data Layer** (`/internal/data`):
+4. **Core Components** (`/internal/core`):
+    - **Session** (`/session`): Core session detection and calculation logic
+        - `detector.go`: Detects 5-hour session windows with priority-based logic
+        - `calculator.go`: Calculates metrics, burn rates, and projections
+        - `window_history.go`: Persists historical window information
+        - `limit_parser.go`: Parses rate limit messages
+    - **Timeline** (`/timeline`): Unified timeline construction for account-level detection
+        - `builder.go`: Builds global timelines from multiple data sources
+    - **Cache** (`/cache`): Memory caching layer
+        - `memory.go`: In-memory cache with entry management
+    - **Monitoring** (`/monitoring`): File system monitoring
+        - `watcher.go`: Watches for JSONL file changes
+
+5. **Data Layer** (`/internal/data`):
     - **Scanner** (`/scanner`): Finds and reads JSONL files concurrently
     - **Parser** (`/parser`): Parses JSONL entries with caching and error resilience
     - **Aggregator** (`/aggregator`): Groups data by time period and model
     - **Cache** (`/cache`): File-based cache with SHA256 hashing
 
-5. **Presentation Layer** (`/internal/presentation`):
+6. **Presentation Layer** (`/internal/presentation`):
     - **Formatter** (`/formatter`): Output formatting (table, JSON, CSV, summary)
     - **Layout** (`/layout`): Terminal UI layout strategies for real-time monitoring
     - **Components** (`/components`): Reusable UI components (headers, tables, status bars)
+    - **Display** (`/display`): Terminal display logic (moved from session)
+    - **Interaction** (`/interaction`): Keyboard input and sorting (moved from session)
 
-6. **Business Logic** (`/internal/business`):
+7. **Business Logic** (`/internal/business`):
     - **Analyzer** (`/analyzer`): Main orchestrator coordinating data processing
     - **Pricing** (`/pricing`): Modular pricing system with provider abstraction
     - **Calculator** (`/calculator`): Token and cost calculations
 
-7. **Utilities** (`/internal/util`):
+8. **Utilities** (`/internal/util`):
     - `time.go`: Global timezone-aware time handling via `TimeProvider`
     - `model.go`: Model name simplification and sorting
     - `format.go`: Number, currency, and duration formatting
 
 ### Key Design Patterns
 
+- **Layered Architecture**: Clear separation between core, application, and presentation layers
 - **Concurrent Processing**: Uses worker pools for parallel file processing with goroutines
 - **Caching Strategy**: Two-level caching - file-based (analyzer) and in-memory (parser)
 - **Time Handling**: All time operations go through `TimeProvider` for consistent timezone support
 - **Error Resilience**: Continues processing on partial failures, logs errors for debugging
 - **Interface-based Design**: Heavy use of interfaces for testability (e.g., `PricingProvider`)
 - **Strategy Pattern**: Layout strategies for different terminal sizes in real-time mode
+- **Single Responsibility**: Each module has a focused, well-defined purpose (refactored from monolithic Manager)
 
 ### Session Window Detection
 
