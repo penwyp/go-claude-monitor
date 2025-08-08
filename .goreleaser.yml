@@ -1,0 +1,43 @@
+version: 2
+
+project_name: go-claude-monitor
+
+builds:
+  - id: go-claude-monitor
+    main: ./cmd/main.go
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/penwyp/go-claude-monitor/cmd.version={{.Version}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    builds:
+      - go-claude-monitor
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: penwyp
+      name: homebrew-go-claude-monitor
+    commit_author:
+      name: penwyp bot
+      email: wu.pen1120@gmail.com
+    directory: Formula
+    homepage: "https://github.com/penwyp/go-claude-monitor"
+    description: "Claude Code usage monitor and analyzer"
+    test: |
+      system "#{bin}/go-claude-monitor", "--help"
+
+release:
+  github:
+    owner: penwyp
+    name: go-claude-monitor
