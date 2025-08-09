@@ -2,6 +2,7 @@ package layout
 
 import (
 	"fmt"
+	"github.com/mattn/go-runewidth"
 	"github.com/penwyp/go-claude-monitor/internal/core/model"
 	"github.com/penwyp/go-claude-monitor/internal/util"
 	"strings"
@@ -334,8 +335,9 @@ func (s *FullLayoutStrategy) sessionLine(aggregated *model.AggregatedMetrics, ma
 		// No active session
 		sessionBar := CreateProgressBar(0, 40)
 		sessionValues = "No active session"
-		sessionLine = fmt.Sprintf("│ ⏰ Session  %s %s %.1f%%",
-			getPercentageEmoji(0), sessionBar, 0.0)
+		// Use gray circle emoji for inactive session instead of green
+		sessionLine = fmt.Sprintf("│ ⏰ Session  ⚫ %s %.1f%%",
+			sessionBar, 0.0)
 	} else {
 		// Active session
 		sessionPercent = CalculateSessionPercentage(elapsedTime)
@@ -359,6 +361,24 @@ func (s *FullLayoutStrategy) sessionLine(aggregated *model.AggregatedMetrics, ma
 	spacing := maxWidth - getDisplayWidth(sessionLine) - getDisplayWidth(sessionValues) - 3
 	if spacing < 2 {
 		spacing = 2
+		// If line is too long, truncate sessionValues to fit
+		maxValueWidth := maxWidth - getDisplayWidth(sessionLine) - 5
+		if maxValueWidth > 0 && getDisplayWidth(sessionValues) > maxValueWidth {
+			// Truncate with ellipsis
+			runes := []rune(sessionValues)
+			truncated := ""
+			width := 0
+			for _, r := range runes {
+				runeWidth := runewidth.RuneWidth(r)
+				if width + runeWidth > maxValueWidth - 3 { // Leave room for "..."
+					truncated += "..."
+					break
+				}
+				truncated += string(r)
+				width += runeWidth
+			}
+			sessionValues = truncated
+		}
 	}
 	sessionLine = fmt.Sprintf("%s%s%s  │", sessionLine, strings.Repeat(" ", spacing), sessionValues)
 	fmt.Println(sessionLine)
