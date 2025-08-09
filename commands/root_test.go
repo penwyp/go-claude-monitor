@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,20 +109,27 @@ func TestRootCommandFlags(t *testing.T) {
 		flag         string
 		defaultValue string
 		shorthand    string
+		isPersistent bool
 	}{
-		{"dir", defaultDataDir, ""},
-		{"duration", "", "d"},
-		{"group-by", "day", ""},
-		{"output", "table", "o"},
-		{"breakdown", "false", "b"},
-		{"reset", "false", "r"},
-		{"timezone", "Local", ""},
-		{"pricing-source", "default", ""},
+		{"dir", defaultDataDir, "", true},
+		{"debug", "false", "", true},
+		{"duration", "", "d", false},
+		{"group-by", "day", "", false},
+		{"output", "table", "o", false},
+		{"breakdown", "false", "b", false},
+		{"reset", "false", "r", false},
+		{"timezone", "Local", "", false},
+		{"pricing-source", "default", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.flag, func(t *testing.T) {
-			flag := rootCmd.Flags().Lookup(tt.flag)
+			var flag *pflag.Flag
+			if tt.isPersistent {
+				flag = rootCmd.PersistentFlags().Lookup(tt.flag)
+			} else {
+				flag = rootCmd.Flags().Lookup(tt.flag)
+			}
 			assert.NotNil(t, flag)
 			assert.Equal(t, tt.defaultValue, flag.DefValue)
 			if tt.shorthand != "" {

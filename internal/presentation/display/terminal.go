@@ -315,16 +315,26 @@ func (td *TerminalDisplay) CalculateAggregatedMetrics(sessions []*Session) *mode
 		aggregated.TotalTokens = firstActiveSession.TotalTokens
 		aggregated.TotalMessages = firstActiveSession.MessageCount
 		
-		// Use model distribution from the first active session only
-		// This ensures consistency between total metrics and model distribution
-		if firstActiveSession.ModelDistribution != nil {
-			for _model, stats := range firstActiveSession.ModelDistribution {
-				if stats != nil {
-					aggregated.ModelDistribution[_model] = &model.ModelStats{
-						Model:  _model,
-						Tokens: stats.Tokens,
-						Cost:   stats.Cost,
-						Count:  stats.Count,
+		// Combine model distributions from all active sessions
+		// This provides a complete view of model usage across all active sessions
+		for _, sess := range sessions {
+			if sess.IsActive && sess.ModelDistribution != nil {
+				for _model, stats := range sess.ModelDistribution {
+					if stats != nil {
+						if existing, exists := aggregated.ModelDistribution[_model]; exists {
+							// Add to existing model stats
+							existing.Tokens += stats.Tokens
+							existing.Cost += stats.Cost
+							existing.Count += stats.Count
+						} else {
+							// Create new model stats entry
+							aggregated.ModelDistribution[_model] = &model.ModelStats{
+								Model:  _model,
+								Tokens: stats.Tokens,
+								Cost:   stats.Cost,
+								Count:  stats.Count,
+							}
+						}
 					}
 				}
 			}

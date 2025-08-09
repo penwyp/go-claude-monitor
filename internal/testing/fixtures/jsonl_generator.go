@@ -8,18 +8,41 @@ import (
 	"time"
 )
 
-// JSONLEntry represents a single JSONL log entry
+// JSONLEntry represents a single JSONL log entry in Claude Code format
 type JSONLEntry struct {
-	Timestamp   string `json:"timestamp"`
-	Type        string `json:"type"`
-	Model       string `json:"model,omitempty"`
-	InputTokens int    `json:"input_tokens,omitempty"`
-	OutputTokens int   `json:"output_tokens,omitempty"`
-	CacheRead   int    `json:"cache_read,omitempty"`
-	CacheWrite  int    `json:"cache_write,omitempty"`
-	Cost        float64 `json:"cost,omitempty"`
-	Message     string `json:"message,omitempty"`
-	ResetTime   string `json:"reset_time,omitempty"`
+	Timestamp    string  `json:"timestamp"`
+	Type         string  `json:"type"`
+	Uuid         string  `json:"uuid"`
+	SessionId    string  `json:"sessionId"`
+	UserType     string  `json:"userType"`
+	Version      string  `json:"version"`
+	Message      Message `json:"message"`
+	// Additional fields for simplified test data
+	Model        string  `json:"model,omitempty"`
+	InputTokens  int     `json:"inputTokens,omitempty"`
+	OutputTokens int     `json:"outputTokens,omitempty"`
+	CacheRead    int     `json:"cacheRead,omitempty"`
+	CacheWrite   int     `json:"cacheWrite,omitempty"`
+	Cost         float64 `json:"cost,omitempty"`
+	ResetTime    string  `json:"resetTime,omitempty"`
+}
+
+// Message represents the message structure in Claude Code logs
+type Message struct {
+	Role    string `json:"role"`
+	Type    string `json:"type"`
+	Content string `json:"content,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Usage   *Usage `json:"usage,omitempty"`
+}
+
+// Usage represents token usage in Claude Code logs
+type Usage struct {
+	InputTokens              int    `json:"input_tokens"`
+	OutputTokens             int    `json:"output_tokens"`
+	CacheCreationInputTokens int    `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int    `json:"cache_read_input_tokens"`
+	ServiceTier              string `json:"service_tier"`
 }
 
 // TestDataGenerator generates test JSONL data
@@ -41,36 +64,79 @@ func (g *TestDataGenerator) GenerateSimpleSession(projectName string, startTime 
 		return err
 	}
 
+	sessionId := "session-" + projectName
 	entries := []JSONLEntry{
+		// User message
 		{
-			Timestamp:   startTime.Format(time.RFC3339),
-			Type:        "usage",
-			Model:       "claude-3.5-sonnet",
-			InputTokens: 1000,
-			OutputTokens: 500,
-			CacheRead:   100,
-			CacheWrite:  50,
-			Cost:        0.015,
+			Timestamp: startTime.Format(time.RFC3339),
+			Type:      "message",
+			Uuid:      "uuid-user-1",
+			SessionId: sessionId,
+			UserType:  "human",
+			Version:   "1.0",
+			Message: Message{
+				Role:    "user",
+				Type:    "text",
+				Content: "Test user message",
+			},
 		},
+		// Assistant response with usage
 		{
-			Timestamp:   startTime.Add(30 * time.Minute).Format(time.RFC3339),
-			Type:        "usage",
-			Model:       "claude-3.5-sonnet",
-			InputTokens: 2000,
-			OutputTokens: 1000,
-			CacheRead:   200,
-			CacheWrite:  100,
-			Cost:        0.030,
+			Timestamp: startTime.Add(5 * time.Second).Format(time.RFC3339),
+			Type:      "message",
+			Uuid:      "uuid-assistant-1",
+			SessionId: sessionId,
+			UserType:  "human",
+			Version:   "1.0",
+			Message: Message{
+				Role:    "assistant",
+				Type:    "text",
+				Content: "Test assistant response",
+				Model:   "claude-3.5-sonnet",
+				Usage: &Usage{
+					InputTokens:              1000,
+					OutputTokens:             500,
+					CacheCreationInputTokens: 50,
+					CacheReadInputTokens:     100,
+					ServiceTier:              "default",
+				},
+			},
 		},
+		// Another user message
 		{
-			Timestamp:   startTime.Add(1 * time.Hour).Format(time.RFC3339),
-			Type:        "usage",
-			Model:       "claude-3.5-sonnet",
-			InputTokens: 1500,
-			OutputTokens: 750,
-			CacheRead:   150,
-			CacheWrite:  75,
-			Cost:        0.023,
+			Timestamp: startTime.Add(30 * time.Minute).Format(time.RFC3339),
+			Type:      "message",
+			Uuid:      "uuid-user-2",
+			SessionId: sessionId,
+			UserType:  "human",
+			Version:   "1.0",
+			Message: Message{
+				Role:    "user",
+				Type:    "text",
+				Content: "Another test message",
+			},
+		},
+		// Another assistant response
+		{
+			Timestamp: startTime.Add(30*time.Minute + 5*time.Second).Format(time.RFC3339),
+			Type:      "message",
+			Uuid:      "uuid-assistant-2",
+			SessionId: sessionId,
+			UserType:  "human",
+			Version:   "1.0",
+			Message: Message{
+				Role:    "assistant",
+				Type:    "text",
+				Content: "Another assistant response",
+				Model:   "claude-3.5-sonnet",
+				Usage: &Usage{
+					InputTokens:              2000,
+					OutputTokens:             1000,
+					CacheCreationInputTokens: 100,
+					CacheReadInputTokens:     200,
+					ServiceTier:              "default",
+				},
+			},
 		},
 	}
 
@@ -109,7 +175,11 @@ func (g *TestDataGenerator) GenerateSessionWithLimit(projectName string, startTi
 		{
 			Timestamp: startTime.Add(2 * time.Hour).Format(time.RFC3339),
 			Type:      "limit",
-			Message:   fmt.Sprintf("Rate limit exceeded. Please try again after %s", resetTime.Format(time.RFC3339)),
+			Message: Message{
+				Role:    "system",
+				Type:    "error",
+				Content: fmt.Sprintf("Rate limit exceeded. Please try again after %s", resetTime.Format(time.RFC3339)),
+			},
 			ResetTime: resetTime.Format(time.RFC3339),
 		},
 		{
@@ -118,7 +188,11 @@ func (g *TestDataGenerator) GenerateSessionWithLimit(projectName string, startTi
 			Model:       "claude-3.5-sonnet",
 			InputTokens: 0,
 			OutputTokens: 0,
-			Message:     "Request failed due to rate limit",
+			Message: Message{
+				Role:    "system",
+				Type:    "error",
+				Content: "Request failed due to rate limit",
+			},
 		},
 	}
 
@@ -185,7 +259,11 @@ func (g *TestDataGenerator) GenerateLargeDataset(projectName string, startTime t
 			entries = append(entries, JSONLEntry{
 				Timestamp: timestamp.Add(30 * time.Second).Format(time.RFC3339),
 				Type:      "limit",
-				Message:   fmt.Sprintf("Rate limit exceeded. Reset at %s", resetTime.Format(time.RFC3339)),
+				Message: Message{
+					Role:    "system",
+					Type:    "error",
+					Content: fmt.Sprintf("Rate limit exceeded. Reset at %s", resetTime.Format(time.RFC3339)),
+				},
 				ResetTime: resetTime.Format(time.RFC3339),
 			})
 		}
@@ -258,4 +336,14 @@ func (g *TestDataGenerator) CreateEmptyProject(projectName string) error {
 		return err
 	}
 	return file.Close()
+}
+
+// GetBaseDir returns the base directory for test data
+func (g *TestDataGenerator) GetBaseDir() string {
+	return g.baseDir
+}
+
+// WriteJSONL writes entries to a JSONL file (public method for test helpers)
+func (g *TestDataGenerator) WriteJSONL(filename string, entries []JSONLEntry) error {
+	return g.writeJSONL(filename, entries)
 }
